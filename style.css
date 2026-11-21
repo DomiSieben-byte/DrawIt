@@ -135,3 +135,9 @@ input[type=range]{accent-color:var(--acc);height:32px}
 @font-face{font-family:'Playfair Display';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/playfair-display-latin-700-normal.woff2) format('woff2')}
 @font-face{font-family:'Merriweather';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/merriweather-latin-400-normal.woff2) format('woff2')}
 @font-face{font-family:'Merriweather';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/merriweather-latin-700-normal.woff2) format('woff2')}
+
+#pageTabs{display:flex;gap:4px;margin-left:6px}
+.ptab{height:38px;padding:0 14px;border-radius:19px;background:var(--panel2);font-size:14px;font-weight:600}
+.ptab.on{background:var(--acc);color:#fff}
+#printArea img{width:100%;display:block;page-break-after:always}
+#printArea img:last-child{page-break-after:auto}

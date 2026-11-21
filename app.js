@@ -68,6 +68,8 @@ const FORMATS = {
   a5l: { label: 'A5 quer', sub: '210 × 148 mm', mm: [210, 148] },
   sq:  { label: 'Quadrat', sub: '148 × 148 mm', mm: [148, 148] },
   dl:  { label: 'DL hoch', sub: '99 × 210 mm', mm: [99, 210] },
+  fold6: { label: 'Doppelkarte A6', sub: 'gefaltet 105 × 148 mm · 2 Seiten', mm: [210, 148], pages: 2, fold: true },
+  fold5: { label: 'Doppelkarte A5', sub: 'gefaltet 148 × 210 mm · 2 Seiten', mm: [297, 210], pages: 2, fold: true, dpiMax: 200 },
 };
 const PAPERS = ['#ffffff', '#fbf3e0', '#d8bb8c', '#b3261e', '#1f5a3a', '#1b2a4a', '#222222'];
 const PALETTE = ['#000000', '#ffffff', '#b3261e', '#e53935', '#ff8a80', '#ef6c00', '#f9a825', '#fff176', '#1b5e20', '#2e7d32', '#81c784', '#0277bd', '#4fc3f7', '#283593', '#6a1b9a', '#ec407a', '#6d4c41', '#bcaaa4', '#9e9e9e', '#d4af37', '#c0c0c0'];
@@ -111,9 +113,11 @@ let S = null;             // aktiver Strich
 let hover = null;
 let sawPen = false;
 let dirty = true;
-const hist = { u: [], r: [] };
+let hist = { u: [], r: [] };
 const HMAX = 60;
 const MAX_LAYERS = 16;
+const totalLayers = () => doc.pages.reduce((a, p) => a + p.layers.length, 0);
+const maxLayers = () => Math.max(6, Math.min(MAX_LAYERS * doc.pages.length, Math.floor(420e6 / (doc.w * doc.h * 4))));
 
 const cv = $('#view');
 const ctx = cv.getContext('2d', { alpha: false, desynchronized: true });
@@ -129,25 +133,47 @@ function newLayer(name) {
   return { id: uid(), name, canvas: c, ctx: c.getContext('2d'), visible: true, opacity: 1, blend: 'source-over', locked: false };
 }
 
+function makeDoc(p) {
+  const d = { cur: 0, ...p };
+  Object.defineProperties(d, {
+    layers: { get() { return this.pages[this.cur].layers; } },
+    active: { get() { return this.pages[this.cur].active; }, set(v) { this.pages[this.cur].active = v; } },
+  });
+  return d;
+}
 function createDoc({ name, fmt, dpi, paper }) {
-  const mm = FORMATS[fmt].mm;
-  doc = {
-    id: uid(), name, fmt, dpi, paper, mm,
-    w: Math.round(mm[0] / 25.4 * dpi), h: Math.round(mm[1] / 25.4 * dpi),
-    layers: [], active: 1,
-  };
-  const bg = newLayer('Papier');
-  bg.ctx.fillStyle = paper; bg.ctx.fillRect(0, 0, doc.w, doc.h);
-  doc.layers.push(bg, newLayer('Ebene 1'));
+  const F = FORMATS[fmt], mm = F.mm;
+  dpi = Math.min(dpi, F.dpiMax || 999);
+  doc = makeDoc({
+    id: uid(), name, fmt, dpi, paper, mm, fold: !!F.fold,
+    w: Math.round(mm[0] / 25.4 * dpi), h: Math.round(mm[1] / 25.4 * dpi), pages: [],
+  });
+  const names = F.fold ? ['Außen', 'Innen'] : ['Seite 1'];
+  names.forEach((pn, i) => {
+    doc.pages.push({ name: pn, layers: [], active: 1, hist: { u: [], r: [] } }); doc.cur = i;
+    const bg = newLayer('Papier'); bg.ctx.fillStyle = paper; bg.ctx.fillRect(0, 0, doc.w, doc.h);
+    doc.layers.push(bg, newLayer('Ebene 1'));
+  });
+  doc.cur = 0; hist = doc.pages[0].hist;
   buf = makeCanvas(doc.w, doc.h);
-  hist.u.length = 0; hist.r.length = 0;
   afterDocChange(true);
   markDirty();
   try { localStorage.setItem('km_last', doc.id); } catch (e) {}
 }
+function buildPageTabs() {
+  const el = $('#pageTabs'); el.innerHTML = '';
+  if (!doc || doc.pages.length < 2) return;
+  doc.pages.forEach((p, i) => el.append(h('button', { class: 'ptab' + (i === doc.cur ? ' on' : ''), text: p.name, onclick: () => switchPage(i) })));
+}
+function switchPage(i) {
+  if (i === doc.cur) return;
+  cancelStroke(); doc.cur = i; hist = doc.pages[i].hist;
+  buildPageTabs(); updateUndoBtns(); refreshLayers(); buildOpts(); invalidate();
+  toast(doc.fold ? (i === 0 ? 'Außenseite: links Rückseite, rechts Vorderseite' : 'Innenseite: links und rechts im aufgeklappten Zustand') : doc.pages[i].name, 2600);
+}
 
 function afterDocChange(fit) {
-  $('#docName').textContent = doc.name;
+  $('#docName').textContent = doc.name; buildPageTabs();
   if (fit) fitView();
   refreshLayers(); updateUndoBtns(); invalidate();
 }
@@ -232,7 +258,16 @@ function render() {
 }
 (function loop() { if (dirty) { dirty = false; render(); } requestAnimationFrame(loop); })();
 
+function drawFold() {
+  ctx.save(); ctx.strokeStyle = 'rgba(90,90,90,.55)'; ctx.lineWidth = 2 / view.s; ctx.setLineDash([14 / view.s, 9 / view.s]);
+  ctx.beginPath(); ctx.moveTo(doc.w / 2, 0); ctx.lineTo(doc.w / 2, doc.h); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(90,90,90,.5)'; ctx.font = `bold ${13 / view.s}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const lab = doc.cur === 0 ? ['Rückseite', 'Vorderseite'] : ['Innen links', 'Innen rechts'];
+  ctx.fillText(lab[0], doc.w / 4, 8 / view.s); ctx.fillText(lab[1], doc.w * 3 / 4, 8 / view.s);
+  ctx.restore();
+}
 function drawGuides() {
+  if (doc.fold) drawFold();
   const g = settings.guides || 0, mm = doc.dpi / 25.4, lw = 1.5 / view.s;
   ctx.save(); ctx.lineWidth = lw; ctx.strokeStyle = 'rgba(217,69,61,.55)'; ctx.setLineDash([8 / view.s, 6 / view.s]);
   if (g >= 1) {
@@ -254,12 +289,12 @@ function drawGuides() {
   }
   ctx.restore();
 }
-function compose(target, scale = 1, bg = '#fff') {
+function compose(target, scale = 1, bg = '#fff', page = doc.cur) {
   const c = target || makeCanvas(doc.w * scale, doc.h * scale);
   const x = c.getContext('2d');
   x.fillStyle = bg; x.fillRect(0, 0, c.width, c.height);
   x.imageSmoothingQuality = 'high';
-  for (const L of doc.layers) {
+  for (const L of doc.pages[page].layers) {
     if (!L.visible) continue;
     x.globalAlpha = L.opacity; x.globalCompositeOperation = L.blend;
     x.drawImage(L.canvas, 0, 0, c.width, c.height);
@@ -656,7 +691,7 @@ async function placeFrame(it) {
   await svgLoad(o); const L = addObjLayer(o, '✨ Rahmen: ' + it.n); if (L) toast('Rahmen eingefügt');
 }
 async function placeColorPage(it) {
-  if (doc.layers.length + 2 > MAX_LAYERS) { toast('Zu viele Ebenen – bitte erst Ebenen zusammenführen'); return; }
+  if (totalLayers() + 2 > maxLayers()) { toast('Zu viele Ebenen – bitte erst Ebenen zusammenführen'); return; }
   const base = doc.active; addLayer(); const colorsL = activeLayer(); colorsL.name = 'Farben';
   const o = { kind: 'svg', cat: 'color', key: it.k, w: Math.min(doc.w, doc.h) * 0.92, x: doc.w / 2, y: doc.h / 2, s: 1, r: 0, fx: 1 };
   await svgLoad(o); addObjLayer(o, '✨ Ausmalbild: ' + it.n);
@@ -719,7 +754,7 @@ function renderObj(L) {
 function flatten(L) { if (L.obj) { L.obj = null; if (/^(🔤|🖼️|✨|🖼) /.test(L.name)) L.name = L.name.replace(/^\S+ /, ''); toast('Objekt wurde in normale Ebene umgewandelt', 1800); refreshLayers(); } }
 function rasterTarget(L) { if (!L.obj) return L; addLayer(); toast('Neue Ebene über dem Objekt angelegt', 1500); return activeLayer(); }
 function addObjLayer(obj, name) {
-  if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return null; }
+  if (totalLayers() >= maxLayers()) { toast('Maximal ' + maxLayers() + ' Ebenen (Speicher) – bitte Ebenen zusammenführen'); return null; }
   const L = newLayer(name); L.obj = obj; renderObj(L);
   const i = doc.active + 1, prev = doc.active;
   doc.layers.splice(i, 0, L); doc.active = i;
@@ -1109,7 +1144,7 @@ function refreshLayers() {
   if (doc && curTool.id === 'move' && !(S && S.kind === 'xform')) buildOpts();
   if (!panelOpen || !doc) return;
   const P = $('#layersPanel'); P.innerHTML = '';
-  P.append(h('div', { class: 'lhead' }, h('span', { text: 'Ebenen (' + doc.layers.length + ')' }), h('button', { class: 'chip', text: '✕', onclick: () => $('#btnLayers').click() })));
+  P.append(h('div', { class: 'lhead' }, h('span', { text: 'Ebenen (' + doc.layers.length + ')' + (doc.pages.length > 1 ? ' · ' + doc.pages[doc.cur].name : '') }), h('button', { class: 'chip', text: '✕', onclick: () => $('#btnLayers').click() })));
   const list = h('div', { class: 'llist' });
   for (let i = doc.layers.length - 1; i >= 0; i--) {
     const L = doc.layers[i], th = makeCanvas(50, 50), tx = th.getContext('2d');
@@ -1144,14 +1179,14 @@ function renameLayer(L) {
   setTimeout(() => { inp.focus(); inp.select(); }, 80);
 }
 function addLayer() {
-  if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return; }
+  if (totalLayers() >= maxLayers()) { toast('Maximal ' + maxLayers() + ' Ebenen (Speicher) – bitte Ebenen zusammenführen'); return; }
   const L = newLayer('Ebene ' + (doc.layers.length)), i = doc.active + 1, prev = doc.active;
   doc.layers.splice(i, 0, L); doc.active = i;
   pushHist({ undo: () => { doc.layers.splice(doc.layers.indexOf(L), 1); doc.active = Math.min(prev, doc.layers.length - 1); }, redo: () => { doc.layers.splice(i, 0, L); doc.active = i; } });
   refreshLayers(); invalidate();
 }
 function dupLayer() {
-  if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return; }
+  if (totalLayers() >= maxLayers()) { toast('Maximal ' + maxLayers() + ' Ebenen (Speicher) – bitte Ebenen zusammenführen'); return; }
   const src = activeLayer(), L = newLayer(src.name + ' Kopie');
   L.ctx.drawImage(src.canvas, 0, 0); L.opacity = src.opacity; L.blend = src.blend;
   const i = doc.active + 1, prev = doc.active;
@@ -1261,7 +1296,7 @@ function helpDialog() {
 /* ================= Bild einfügen ================= */
 $('#fileIn').onchange = async ev => {
   const f = ev.target.files[0]; ev.target.value = ''; if (!f || !doc) return;
-  if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return; }
+  if (totalLayers() >= maxLayers()) { toast('Maximal ' + maxLayers() + ' Ebenen (Speicher) – bitte Ebenen zusammenführen'); return; }
   try {
     const bmp = await createImageBitmap(f), lim = Math.min(1, 2600 / Math.max(bmp.width, bmp.height));
     const img = makeCanvas(Math.round(bmp.width * lim), Math.round(bmp.height * lim)); img.getContext('2d').drawImage(bmp, 0, 0, img.width, img.height);
@@ -1299,17 +1334,20 @@ async function saveDoc() {
   if (saving) { pending = true; return; }
   saving = true; clearTimeout(saveTimer);
   try {
-    const d = doc;
-    const layers = [];
-    for (const L of d.layers) {
-      const rec = { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, locked: L.locked, blob: await canvasToBlob(L.canvas, 'image/png') };
-      if (L.obj) { const { img, ...rest } = L.obj; rec.obj = rest; if (img) rec.objImg = await canvasToBlob(img, 'image/png'); }
-      layers.push(rec);
+    const d = doc, pages = [];
+    for (const P of d.pages) {
+      const layers = [];
+      for (const L of P.layers) {
+        const rec = { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, locked: L.locked, blob: await canvasToBlob(L.canvas, 'image/png') };
+        if (L.obj) { const { img, ...rest } = L.obj; rec.obj = rest; if (img) rec.objImg = await canvasToBlob(img, 'image/png'); }
+        layers.push(rec);
+      }
+      pages.push({ name: P.name, active: P.active, layers });
     }
     const th = makeCanvas(240, Math.round(240 * d.h / d.w)); const tx = th.getContext('2d'); tx.fillStyle = '#fff'; tx.fillRect(0, 0, th.width, th.height);
-    tx.drawImage(compose(null, 1), 0, 0, th.width, th.height);
+    tx.drawImage(compose(null, 1, '#fff', 0), 0, 0, th.width, th.height);
     const thumb = await canvasToBlob(th, 'image/jpeg', 0.8);
-    await DB.put({ id: d.id, name: d.name, fmt: d.fmt, dpi: d.dpi, paper: d.paper, w: d.w, h: d.h, mm: d.mm, active: d.active, updated: Date.now(), thumb, layers });
+    await DB.put({ id: d.id, name: d.name, fmt: d.fmt, dpi: d.dpi, paper: d.paper, w: d.w, h: d.h, mm: d.mm, fold: d.fold, cur: d.cur, updated: Date.now(), thumb, pages });
     try { localStorage.setItem('km_last', d.id); } catch (e) {}
   } catch (e) { console.warn('Speichern fehlgeschlagen', e); if (!saveWarned) { saveWarned = true; toast('Automatisches Speichern ist hier nicht möglich – bitte als PDF/Bild exportieren', 5000); } }
   saving = false;
@@ -1317,18 +1355,24 @@ async function saveDoc() {
 }
 async function loadDoc(id) {
   const rec = await DB.get(id); if (!rec) return false;
-  doc = { id: rec.id, name: rec.name, fmt: rec.fmt, dpi: rec.dpi, paper: rec.paper, mm: rec.mm, w: rec.w, h: rec.h, layers: [], active: rec.active || 0 };
-  for (const l of rec.layers) {
-    const L = newLayer(l.name); L.id = l.id; L.visible = l.visible; L.opacity = l.opacity; L.blend = l.blend; L.locked = l.locked;
-    const bmp = await createImageBitmap(l.blob); L.ctx.drawImage(bmp, 0, 0); doc.layers.push(L);
-    if (l.obj) {
-      L.obj = { ...l.obj };
-      if (l.objImg) { const ib = await createImageBitmap(l.objImg), ic = makeCanvas(ib.width, ib.height); ic.getContext('2d').drawImage(ib, 0, 0); L.obj.img = ic; }
+  doc = makeDoc({ id: rec.id, name: rec.name, fmt: rec.fmt, dpi: rec.dpi, paper: rec.paper, mm: rec.mm, w: rec.w, h: rec.h, fold: !!rec.fold, pages: [] });
+  const recPages = rec.pages || [{ name: 'Seite 1', active: rec.active || 0, layers: rec.layers }];
+  for (const rp of recPages) {
+    const P = { name: rp.name, layers: [], active: rp.active || 0, hist: { u: [], r: [] } };
+    doc.pages.push(P); doc.cur = doc.pages.length - 1;
+    for (const l of rp.layers) {
+      const L = newLayer(l.name); L.id = l.id; L.visible = l.visible; L.opacity = l.opacity; L.blend = l.blend; L.locked = l.locked;
+      const bmp = await createImageBitmap(l.blob); L.ctx.drawImage(bmp, 0, 0); P.layers.push(L);
+      if (l.obj) {
+        L.obj = { ...l.obj };
+        if (l.objImg) { const ib = await createImageBitmap(l.objImg), ic = makeCanvas(ib.width, ib.height); ic.getContext('2d').drawImage(ib, 0, 0); L.obj.img = ic; }
+      }
     }
+    P.active = Math.min(P.active, P.layers.length - 1);
+    await Promise.all(P.layers.filter(l => l.obj && l.obj.kind === 'svg').map(l => svgLoad(l.obj)));
   }
-  await Promise.all(doc.layers.filter(l => l.obj && l.obj.kind === 'svg').map(l => svgLoad(l.obj)));
-  doc.active = Math.min(doc.active, doc.layers.length - 1);
-  buf = makeCanvas(doc.w, doc.h); hist.u.length = 0; hist.r.length = 0;
+  doc.cur = Math.min(rec.cur || 0, doc.pages.length - 1); hist = doc.pages[doc.cur].hist;
+  buf = makeCanvas(doc.w, doc.h);
   afterDocChange(true);
   try { localStorage.setItem('km_last', doc.id); } catch (e) {}
   return true;
@@ -1353,30 +1397,66 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) saveD
 window.addEventListener('pagehide', () => saveDoc());
 
 /* ================= Export ================= */
+const exportOpts = { marks: false };
+const MM2PT = mm => mm / 25.4 * 72;
 function safeName() { return (doc.name || 'Karte').replace(/[^\wäöüÄÖÜß\- ]+/g, '').trim().replace(/\s+/g, '_') || 'Karte'; }
-async function makeJpegBlob() { return canvasToBlob(compose(null, 1, '#ffffff'), 'image/jpeg', 0.95); }
-async function makePngBlob() { return canvasToBlob(compose(null, 1, '#ffffff'), 'image/png'); }
+function renderPage(i, bleedMm = 0) {
+  const base = compose(null, 1, '#ffffff', i);
+  if (!bleedMm) return base;
+  const b = Math.round(bleedMm * doc.dpi / 25.4), W = doc.w, H = doc.h, c = makeCanvas(W + 2 * b, H + 2 * b), x = c.getContext('2d');
+  x.drawImage(base, b, b);
+  x.drawImage(base, 0, 0, 1, H, 0, b, b, H); x.drawImage(base, W - 1, 0, 1, H, W + b, b, b, H);
+  x.drawImage(base, 0, 0, W, 1, b, 0, W, b); x.drawImage(base, 0, H - 1, W, 1, b, H + b, W, b);
+  x.drawImage(base, 0, 0, 1, 1, 0, 0, b, b); x.drawImage(base, W - 1, 0, 1, 1, W + b, 0, b, b);
+  x.drawImage(base, 0, H - 1, 1, 1, 0, H + b, b, b); x.drawImage(base, W - 1, H - 1, 1, 1, W + b, H + b, b, b);
+  return c;
+}
 async function makePdfBlob() {
-  const jpg = new Uint8Array(await (await makeJpegBlob()).arrayBuffer());
-  const wpt = doc.mm[0] / 25.4 * 72, hpt = doc.mm[1] / 25.4 * 72, f = n => n.toFixed(3);
+  const marks = exportOpts.marks, bleed = marks ? 3 : 0, M = marks ? 10 : 0, sw = doc.mm[0], sh = doc.mm[1];
+  const pw = MM2PT(sw + 2 * M), ph = MM2PT(sh + 2 * M), f = n => n.toFixed(3);
   const enc = new TextEncoder(), parts = [], offs = []; let pos = 0;
   const add = d => { const u = typeof d === 'string' ? enc.encode(d) : d; parts.push(u); pos += u.length; };
+  const n = doc.pages.length;
   add('%PDF-1.4\n');
-  const obj = (n, body) => { offs[n] = pos; add(`${n} 0 obj\n${body}\nendobj\n`); };
+  const obj = (id, body) => { offs[id] = pos; add(`${id} 0 obj\n${body}\nendobj\n`); };
   obj(1, '<</Type/Catalog/Pages 2 0 R>>');
-  obj(2, '<</Type/Pages/Kids[3 0 R]/Count 1>>');
-  obj(3, `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${f(wpt)} ${f(hpt)}]/Resources<</XObject<</Im0 4 0 R>>>>/Contents 5 0 R>>`);
-  offs[4] = pos;
-  add(`4 0 obj\n<</Type/XObject/Subtype/Image/Width ${doc.w}/Height ${doc.h}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length ${jpg.length}>>\nstream\n`);
-  add(jpg); add('\nendstream\nendobj\n');
-  const content = `q ${f(wpt)} 0 0 ${f(hpt)} 0 0 cm /Im0 Do Q`;
-  obj(5, `<</Length ${content.length}>>\nstream\n${content}\nendstream`);
-  const xr = pos;
-  let x = 'xref\n0 6\n0000000000 65535 f \n';
-  for (let i = 1; i <= 5; i++) x += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
-  x += `trailer\n<</Size 6/Root 1 0 R/Info<</Title(${safeName()})/Producer(DrawIt)>>>>\nstartxref\n${xr}\n%%EOF`;
+  obj(2, `<</Type/Pages/Kids[${doc.pages.map((_, i) => (3 + 3 * i) + ' 0 R').join(' ')}]/Count ${n}>>`);
+  for (let i = 0; i < n; i++) {
+    const pg = 3 + 3 * i, im = pg + 1, ct = pg + 2;
+    const jpg = new Uint8Array(await (await canvasToBlob(renderPage(i, bleed), 'image/jpeg', 0.95)).arrayBuffer());
+    obj(pg, `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${f(pw)} ${f(ph)}]/Resources<</XObject<</Im0 ${im} 0 R>>>>/Contents ${ct} 0 R>>`);
+    const iw = Math.round((sw + 2 * bleed) / 25.4 * doc.dpi), ih = Math.round((sh + 2 * bleed) / 25.4 * doc.dpi);
+    offs[im] = pos;
+    add(`${im} 0 obj\n<</Type/XObject/Subtype/Image/Width ${iw}/Height ${ih}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length ${jpg.length}>>\nstream\n`);
+    add(jpg); add('\nendstream\nendobj\n');
+    let c = `q ${f(MM2PT(sw + 2 * bleed))} 0 0 ${f(MM2PT(sh + 2 * bleed))} ${f(MM2PT(M - bleed))} ${f(MM2PT(M - bleed))} cm /Im0 Do Q`;
+    if (marks) {
+      const gap = 3.5, len = 5, L = [];
+      const ln = (x1, y1, x2, y2) => L.push(`${f(MM2PT(x1))} ${f(MM2PT(y1))} m ${f(MM2PT(x2))} ${f(MM2PT(y2))} l S`);
+      for (const [cx, cy, dx, dy] of [[M, M, -1, -1], [M + sw, M, 1, -1], [M, M + sh, -1, 1], [M + sw, M + sh, 1, 1]]) {
+        ln(cx + dx * gap, cy, cx + dx * (gap + len), cy); ln(cx, cy + dy * gap, cx, cy + dy * (gap + len));
+      }
+      if (doc.fold) { const mx = M + sw / 2; ln(mx, M - gap, mx, M - gap - len); ln(mx, M + sh + gap, mx, M + sh + gap + len); }
+      c += ' 0 0 0 RG 0.5 w ' + L.join(' ');
+    }
+    obj(ct, `<</Length ${c.length}>>\nstream\n${c}\nendstream`);
+  }
+  const total = 3 + 3 * n, xr = pos;
+  let x = `xref\n0 ${total}\n0000000000 65535 f \n`;
+  for (let i = 1; i < total; i++) x += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
+  x += `trailer\n<</Size ${total}/Root 1 0 R/Info<</Title(${safeName()})/Producer(DrawIt)>>>>\nstartxref\n${xr}\n%%EOF`;
   add(x);
   return new Blob(parts, { type: 'application/pdf' });
+}
+async function makePngSet(forShare) {
+  const base = safeName(), out = [], png = c => canvasToBlob(c, 'image/png');
+  if (doc.fold) {
+    const p0 = compose(null, 1, '#ffffff', 0), p1 = compose(null, 1, '#ffffff', 1), hw = Math.floor(doc.w / 2);
+    out.push({ name: base + '_Vorderseite.png', blob: await png(cropCanvas(p0, doc.w - hw, 0, hw, doc.h)) });
+    out.push({ name: base + '_Innenseiten.png', blob: await png(p1) });
+    if (!forShare) out.push({ name: base + '_Rueckseite.png', blob: await png(cropCanvas(p0, 0, 0, hw, doc.h)) });
+  } else for (let i = 0; i < doc.pages.length; i++) out.push({ name: base + (doc.pages.length > 1 ? '_' + (i + 1) : '') + '.png', blob: await png(compose(null, 1, '#ffffff', i)) });
+  return out.map(o => ({ ...o, type: 'image/png' }));
 }
 function download(blob, name) {
   const a = h('a', { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click();
@@ -1384,38 +1464,45 @@ function download(blob, name) {
 }
 async function outFile(kind, share) {
   await saveDoc();
-  toast('Wird erstellt …', 6000);
-  let blob, name, type;
+  toast('Wird erstellt …', 8000);
+  let files;
   try {
-    if (kind === 'pdf') { blob = await makePdfBlob(); name = safeName() + '.pdf'; type = 'application/pdf'; }
-    else { blob = await makePngBlob(); name = safeName() + '.png'; type = 'image/png'; }
-  } catch (e) { toast('Export fehlgeschlagen'); return; }
+    files = kind === 'pdf' ? [{ blob: await makePdfBlob(), name: safeName() + '.pdf', type: 'application/pdf' }] : await makePngSet(share);
+  } catch (e) { console.warn(e); toast('Export fehlgeschlagen'); return; }
   $('#toast').classList.remove('show');
   if (share && navigator.canShare) {
-    const file = new File([blob], name, { type });
-    if (navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: doc.name }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    const fl = files.map(f => new File([f.blob], f.name, { type: f.type }));
+    if (navigator.canShare({ files: fl })) {
+      try { await navigator.share({ files: fl, title: doc.name }); return; } catch (e) { if (e.name === 'AbortError') return; }
     }
   }
-  download(blob, name); toast('Gespeichert: ' + name + ' (Downloads)');
+  for (let i = 0; i < files.length; i++) { download(files[i].blob, files[i].name); await new Promise(r => setTimeout(r, 400)); }
+  toast('Gespeichert: ' + files.map(f => f.name).join(', '), 4000);
 }
 async function printCard() {
   await saveDoc();
-  const blob = await makeJpegBlob(), url = URL.createObjectURL(blob);
   let st = $('#pageStyle'); if (!st) { st = h('style', { id: 'pageStyle' }); document.head.append(st); }
   st.textContent = `@page{size:${doc.mm[0]}mm ${doc.mm[1]}mm;margin:0}`;
-  const pa = $('#printArea'); pa.innerHTML = ''; const img = h('img', { src: url }); pa.append(img);
-  await img.decode().catch(() => {});
+  const pa = $('#printArea'); pa.innerHTML = '';
+  const imgs = [];
+  for (let i = 0; i < doc.pages.length; i++) { const img = h('img', { src: URL.createObjectURL(await canvasToBlob(renderPage(i), 'image/jpeg', 0.95)) }); pa.append(img); imgs.push(img); }
+  await Promise.all(imgs.map(i => i.decode().catch(() => {})));
   setTimeout(() => window.print(), 100);
 }
 function exportDialog() {
   const b = (label, sub, fn, cls) => h('button', { class: 'btn ' + (cls || ''), style: 'height:56px;text-align:left;width:100%', onclick: () => { closeModalFn && closeModalFn(); fn(); } }, label, h('small', { text: ' ' + sub, style: 'opacity:.75' }));
-  openModal('Karte exportieren', h('div', { class: 'menu' },
-    b('📤 Teilen …', 'WhatsApp, E-Mail & Co. (als Bild)', () => outFile('png', true), 'sec'),
-    b('📄 PDF speichern', 'Originalgröße ' + FORMATS[doc.fmt].label + ' – zum Drucken', () => outFile('pdf', false), 'pri'),
-    b('📄 PDF teilen …', 'per Nachricht oder E-Mail senden', () => outFile('pdf', true)),
-    b('🖼 Bild (PNG) speichern', 'volle Auflösung', () => outFile('png', false)),
-    b('🖨 Drucken', 'direkt an einen Drucker', printCard)), [{ label: 'Schließen' }]);
+  const fmt = FORMATS[doc.fmt].label;
+  const marks = h('button', { class: 'chip' + (exportOpts.marks ? ' on' : ''), style: 'height:auto;padding:8px 14px;text-align:left;white-space:normal', text: 'Schnittmarken & 3 mm Beschnitt im PDF (für Druckerei oder sauberen Zuschnitt)', onclick: ev => { exportOpts.marks = !exportOpts.marks; ev.currentTarget.classList.toggle('on', exportOpts.marks); } });
+  openModal('Karte exportieren', h('div', {},
+    h('div', { class: 'menu' },
+      b('📤 Teilen …', doc.fold ? 'Vorder- und Innenseite als Bilder (WhatsApp & Co.)' : 'WhatsApp, E-Mail & Co. (als Bild)', () => outFile('png', true), 'sec'),
+      b('📄 PDF speichern', doc.fold ? 'Blatt ' + (doc.mm[0] + ' × ' + doc.mm[1]) + ' mm, 2 Seiten – zum Drucken' : 'Originalgröße ' + fmt + ' – zum Drucken', () => outFile('pdf', false), 'pri'),
+      b('📄 PDF teilen …', 'per Nachricht oder E-Mail senden', () => outFile('pdf', true)),
+      b('🖼 Bild (PNG) speichern', doc.fold ? 'Vorderseite, Rückseite, Innenseiten' : 'volle Auflösung', () => outFile('png', false)),
+      b('🖨 Drucken', 'direkt an einen Drucker', printCard)),
+    h('div', { style: 'margin-top:10px' }, marks),
+    doc.fold ? h('p', { class: 'hint', style: 'margin:10px 0 0', text: 'Tipp zum Drucken: Beidseitig drucken, Wenden wie beim Umblättern einer Buchseite (Querformat: kurze Kante). Danach in der Mitte falten.' }) : null),
+    [{ label: 'Schließen' }]);
 }
 
 /* ================= Start ================= */
@@ -1441,5 +1528,5 @@ window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferr
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 })();
 
-window.__km = { get doc() { return doc; }, undo, redo, selectTool, setColor, get hist() { return hist; } };
+window.__km = { exportOpts, makePdfBlob, saveDoc, makePngSet, get doc() { return doc; }, undo, redo, selectTool, setColor, get hist() { return hist; } };
 })();
