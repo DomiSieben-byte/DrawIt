@@ -79,12 +79,17 @@ const FONTS = [
 const TOOLS = [
   { id: 'pen', name: 'Füller', icon: '✒️', brush: true, mm: 0.9, op: 1, smooth: 3, press: true },
   { id: 'pencil', name: 'Bleistift', icon: '✏️', brush: true, mm: 0.7, op: 1, smooth: 1, press: true },
+  { id: 'calli', name: 'Kalligrafie', icon: '✍️', brush: true, mm: 3, op: 1, smooth: 4, press: true },
   { id: 'brush', name: 'Pinsel', icon: '🖌️', brush: true, mm: 4, op: 1, smooth: 3, press: true },
+  { id: 'water', name: 'Aquarell', icon: '🎨', brush: true, mm: 9, op: 0.45, smooth: 4, press: true },
   { id: 'marker', name: 'Marker', icon: '🖍️', brush: true, mm: 5, op: 0.5, smooth: 3, press: false },
+  { id: 'chalk', name: 'Kreide', icon: '🌫️', brush: true, mm: 5, op: 1, smooth: 2, press: true },
   { id: 'spray', name: 'Spray', icon: '💨', brush: true, mm: 10, op: 1, smooth: 0, press: false },
+  { id: 'snow', name: 'Schnee', icon: '❄️', brush: true, mm: 14, op: 1, smooth: 0, press: false },
+  { id: 'glitter', name: 'Glitzer', icon: '✨', brush: true, mm: 12, op: 1, smooth: 0, press: false },
   { id: 'eraser', name: 'Radierer', icon: '🧽', brush: true, mm: 4, op: 1, smooth: 1, press: true },
   { id: 'fill', name: 'Füllen', icon: '🪣', tol: 40, allLayers: true },
-  { id: 'pick', name: 'Pipette', icon: '💧' },
+  { id: 'pick', name: 'Pipette', icon: '🧪' },
   { id: 'shape', name: 'Form', icon: '◻️', mm: 0.9, op: 1, kind: 'line', filled: false },
   { id: 'text', name: 'Text', icon: '🔤', font: 0, bold: false, italic: false, mm: 10, txt: '' },
   { id: 'stamp', name: 'Stempel', icon: '🎄', mm: 16, emoji: '🎄', rotate: true },
@@ -209,6 +214,7 @@ function render() {
     }
   });
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  drawGuides();
   // Pinsel-Ring
   if (hover && curTool.brush && !S) {
     const r = Math.max(2, mmToPx(curTool.mm) / 2 * view.s);
@@ -221,6 +227,28 @@ function render() {
 }
 (function loop() { if (dirty) { dirty = false; render(); } requestAnimationFrame(loop); })();
 
+function drawGuides() {
+  const g = settings.guides || 0, mm = doc.dpi / 25.4, lw = 1.5 / view.s;
+  ctx.save(); ctx.lineWidth = lw; ctx.strokeStyle = 'rgba(217,69,61,.55)'; ctx.setLineDash([8 / view.s, 6 / view.s]);
+  if (g >= 1) {
+    ctx.beginPath(); ctx.moveTo(doc.w / 2, 0); ctx.lineTo(doc.w / 2, doc.h); ctx.moveTo(0, doc.h / 2); ctx.lineTo(doc.w, doc.h / 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(46,155,87,.7)'; ctx.strokeRect(5 * mm, 5 * mm, doc.w - 10 * mm, doc.h - 10 * mm);
+  }
+  if (g >= 2) {
+    ctx.setLineDash([]); ctx.strokeStyle = 'rgba(80,120,200,.28)'; ctx.lineWidth = 1 / view.s; ctx.beginPath();
+    for (let x = 10 * mm; x < doc.w; x += 10 * mm) { ctx.moveTo(x, 0); ctx.lineTo(x, doc.h); }
+    for (let y = 10 * mm; y < doc.h; y += 10 * mm) { ctx.moveTo(0, y); ctx.lineTo(doc.w, y); }
+    ctx.stroke();
+  }
+  if (symMode !== 'off') {
+    ctx.setLineDash([]); ctx.strokeStyle = 'rgba(155,60,200,.55)'; ctx.lineWidth = 1.5 / view.s; ctx.beginPath();
+    const cx = doc.w / 2, cy = doc.h / 2, L = Math.hypot(doc.w, doc.h);
+    if (symMode === 'mir') { ctx.moveTo(cx, 0); ctx.lineTo(cx, doc.h); }
+    else { const n = { r3: 3, r4: 4, r6: 6, r8: 8, k6: 6 }[symMode]; for (let k = 0; k < n; k++) { const a = k * TAU / n - Math.PI / 2; ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * L, cy + Math.sin(a) * L); } }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 function compose(target, scale = 1, bg = '#fff') {
   const c = target || makeCanvas(doc.w * scale, doc.h * scale);
   const x = c.getContext('2d');
@@ -292,6 +320,59 @@ function stamp(x2, tool, x, y, p, col) {
       }
       x2.globalAlpha = 1; break;
     }
+    case 'calli': {
+      r = base * (tool.press ? 0.55 + 0.45 * p : 1);
+      x2.fillStyle = col; x2.beginPath(); x2.ellipse(x, y, r, r * 0.22, -Math.PI / 4, 0, TAU); x2.fill(); break;
+    }
+    case 'water': {
+      r = base * (tool.press ? 0.6 + 0.4 * p : 1);
+      const jr = r * (0.85 + Math.random() * 0.3), jx = (Math.random() - 0.5) * r * 0.3, jy = (Math.random() - 0.5) * r * 0.3;
+      x2.globalAlpha = 0.07 + 0.05 * Math.random();
+      x2.drawImage(softSprite(col), x + jx - jr, y + jy - jr, jr * 2, jr * 2);
+      x2.globalAlpha = 1; break;
+    }
+    case 'chalk': {
+      r = base * (tool.press ? 0.6 + 0.4 * p : 1);
+      x2.fillStyle = col;
+      const n = Math.ceil(r * r * 0.06) + 8;
+      for (let i = 0; i < n; i++) {
+        if (Math.random() < 0.3) continue;
+        const a = Math.random() * TAU, d = Math.sqrt(Math.random()) * r, sz = (0.8 + Math.random() * 2) * sc;
+        x2.globalAlpha = 0.55 + Math.random() * 0.45;
+        x2.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz * (0.6 + Math.random() * 0.8));
+      }
+      x2.globalAlpha = 1; break;
+    }
+    case 'snow': {
+      x2.fillStyle = col; x2.strokeStyle = col;
+      const n = Math.max(3, Math.round(base * 0.1));
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * TAU, d = Math.sqrt(Math.random()) * base, fr = Math.max(sc * 1.6, base * 0.05) * (0.5 + Math.random() * Math.random() * 2.6);
+        const fx = x + Math.cos(a) * d, fy = y + Math.sin(a) * d;
+        if (fr > base * 0.07 && fr > 5 * sc && Math.random() < 0.5) {
+          x2.globalAlpha = 0.9; x2.lineWidth = Math.max(1, fr * 0.22); x2.lineCap = 'round'; x2.beginPath();
+          const rot = Math.random() * Math.PI;
+          for (let k = 0; k < 3; k++) { const aa = rot + k * Math.PI / 3; x2.moveTo(fx - Math.cos(aa) * fr * 1.6, fy - Math.sin(aa) * fr * 1.6); x2.lineTo(fx + Math.cos(aa) * fr * 1.6, fy + Math.sin(aa) * fr * 1.6); }
+          x2.stroke();
+        } else {
+          x2.globalAlpha = 0.55 + Math.random() * 0.45; x2.drawImage(softSprite(col), fx - fr, fy - fr, fr * 2, fr * 2);
+        }
+      }
+      x2.globalAlpha = 1; break;
+    }
+    case 'glitter': {
+      const n = Math.max(3, Math.round(base * 0.1)), pal = [col, col, '#ffffff', '#fff2b3'];
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * TAU, d = Math.sqrt(Math.random()) * base, gr = Math.max(sc * 1.5, base * 0.035) * (0.7 + Math.random() * Math.random() * 3);
+        const gx = x + Math.cos(a) * d, gy = y + Math.sin(a) * d;
+        x2.fillStyle = pal[(Math.random() * pal.length) | 0]; x2.globalAlpha = 0.6 + Math.random() * 0.4;
+        x2.beginPath();
+        if (Math.random() < 0.55) { x2.arc(gx, gy, gr * 0.6, 0, TAU); }
+        else { const k = 0.28; x2.moveTo(gx, gy - gr * 2); x2.quadraticCurveTo(gx + gr * k, gy - gr * k, gx + gr * 2, gy); x2.quadraticCurveTo(gx + gr * k, gy + gr * k, gx, gy + gr * 2); x2.quadraticCurveTo(gx - gr * k, gy + gr * k, gx - gr * 2, gy); x2.quadraticCurveTo(gx - gr * k, gy - gr * k, gx, gy - gr * 2); }
+        x2.fill();
+      }
+      x2.globalAlpha = 1; break;
+    }
     case 'eraser':
       r = base * (tool.press ? 0.4 + 0.6 * p : 1);
       x2.fillStyle = '#000'; x2.beginPath(); x2.arc(x, y, r, 0, TAU); x2.fill(); break;
@@ -303,11 +384,33 @@ const dpiScale = () => doc.dpi / 300 * 1.2;
 function stepFor(tool, p) {
   const r = mmToPx(tool.mm) / 2;
   switch (tool.id) {
-    case 'spray': return Math.max(2, r * 0.3);
+    case 'spray': case 'snow': case 'glitter': return Math.max(2, r * 0.3);
+    case 'chalk': return Math.max(1, r * 0.3);
+    case 'water': return Math.max(1, r * 0.18);
     case 'pencil': return Math.max(1, r * 0.35);
     case 'brush': return Math.max(1, r * 0.12);
     default: return Math.max(0.7, r * 0.18);
   }
+}
+
+const SYMS = [['off', 'Aus'], ['mir', 'Spiegel'], ['r3', '3×'], ['r4', '4×'], ['r6', '6×'], ['r8', '8×'], ['k6', 'Kaleido']];
+let symMode = 'off';
+function symPoints(x, y) {
+  if (symMode === 'off' || !doc) return [[x, y]];
+  const cx = doc.w / 2, cy = doc.h / 2;
+  if (symMode === 'mir') return [[x, y], [doc.w - x, y]];
+  const n = { r3: 3, r4: 4, r6: 6, r8: 8, k6: 6 }[symMode], dx = x - cx, dy = y - cy, out = [];
+  for (let k = 0; k < n; k++) {
+    const a = k * TAU / n, c = Math.cos(a), sn = Math.sin(a), rx = dx * c - dy * sn, ry = dx * sn + dy * c;
+    out.push([cx + rx, cy + ry]);
+    if (symMode === 'k6') out.push([cx - rx, cy + ry]);
+  }
+  return out;
+}
+function stampSym(x2, tool, x, y, p, col, box) {
+  let r = 0;
+  for (const [sx, sy] of symPoints(x, y)) { r = stamp(x2, tool, sx, sy, p, col); grow(box, sx, sy, r + 4); }
+  return r;
 }
 
 function beginStroke(e) {
@@ -326,8 +429,7 @@ function beginStroke(e) {
   else buf.getContext('2d').clearRect(0, 0, doc.w, doc.h);
   S.last = { x: pt.x, y: pt.y, p: S.sp.p };
   const x2 = S.buf ? buf.getContext('2d') : L.ctx;
-  const r = stamp(x2, tool, pt.x, pt.y, S.sp.p, color);
-  grow(S.box, pt.x, pt.y, r + 4);
+  stampSym(x2, tool, pt.x, pt.y, S.sp.p, color, S.box);
   invalidate();
 }
 
@@ -346,8 +448,7 @@ function segment(b) {
   while (pos <= total) {
     const t = pos / total;
     const x = a.x + dx * t, y = a.y + dy * t, p = a.p + (b.p - a.p) * t;
-    const r = stamp(x2, S.tool, x, y, p, S.color);
-    grow(S.box, x, y, r + 4);
+    stampSym(x2, S.tool, x, y, p, S.color, S.box);
     pos += step; stamped = true;
   }
   S.carry = stamped ? total - (pos - step) : S.carry + total;
@@ -571,11 +672,13 @@ function startGesture() {
   const [a, b] = [...touches.values()];
   gesture = {
     cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, v: { ...view },
+    t0: performance.now(), tap: true, three: false,
   };
 }
 function updateGesture() {
   const [a, b] = [...touches.values()];
   const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+  if (Math.abs(d / gesture.d - 1) > 0.08 || Math.hypot(cx - gesture.cx, cy - gesture.cy) > 14) gesture.tap = false;
   const s = clamp(gesture.v.s * d / gesture.d, 0.05, 10);
   const px = (gesture.cx - gesture.v.x) / gesture.v.s, py = (gesture.cy - gesture.v.y) / gesture.v.s;
   view.s = s; view.x = cx - px * s; view.y = cy - py * s; invalidate();
@@ -591,7 +694,7 @@ cv.addEventListener('pointerdown', e => {
   const rect = cv.getBoundingClientRect();
   if (e.pointerType === 'touch') {
     touches.set(e.pointerId, { x: e.clientX - rect.left, y: e.clientY - rect.top });
-    if (touches.size >= 2) { cancelStroke(); startGesture(); return; }
+    if (touches.size >= 2) { cancelStroke(); if (touches.size === 2) startGesture(); else if (gesture) gesture.three = true; return; }
     if (!settings.fingerDraws) return;
   }
   if (S) return;
@@ -626,6 +729,10 @@ cv.addEventListener('pointermove', e => {
 });
 function up(e) {
   if (e.pointerType === 'touch') {
+    if (gesture && gesture.tap && e.type === 'pointerup' && performance.now() - gesture.t0 < 380) {
+      gesture.tap = false;
+      if (gesture.three) { redo(); toast('Wiederholen ↷', 900); } else { undo(); toast('Rückgängig ↶', 900); }
+    }
     touches.delete(e.pointerId);
     if (touches.size < 2) gesture = null;
   }
@@ -650,6 +757,8 @@ function zoomAt(mx, my, f) {
 $('#zIn').onclick = () => { const r = cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.3); };
 $('#zOut').onclick = () => { const r = cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1 / 1.3); };
 $('#zFit').onclick = fitView;
+const GUIDE_NAMES = ['Hilfslinien aus', 'Mitte & Rand', 'Mitte, Rand & Raster'];
+$('#zGrid').onclick = () => { settings.guides = ((settings.guides || 0) + 1) % 3; saveSettings(); $('#zGrid').classList.toggle('on', !!settings.guides); toast(GUIDE_NAMES[settings.guides], 1400); invalidate(); };
 window.addEventListener('resize', () => { resize(); fitView(); });
 window.addEventListener('keydown', e => {
   if (e.target.closest && e.target.closest('input,textarea,select')) return;
@@ -683,9 +792,11 @@ function buildOpts() {
   if (t.brush) {
     bar.append(sizeSl());
     if (t.id !== 'eraser') bar.append(slider('Deckkraft', 5, 100, Math.round(t.op * 100), v => v + '%', v => { t.op = v / 100; }));
-    if (t.id !== 'spray') bar.append(slider('Glättung', 0, 10, t.smooth, v => v, v => { t.smooth = v; }));
-    if (['pen', 'pencil', 'brush', 'eraser'].includes(t.id))
+    if (!['spray', 'snow', 'glitter'].includes(t.id)) bar.append(slider('Glättung', 0, 10, t.smooth, v => v, v => { t.smooth = v; }));
+    if (['pen', 'pencil', 'calli', 'brush', 'water', 'chalk', 'eraser'].includes(t.id))
       bar.append(h('button', { class: 'chip' + (settings.pressure ? ' on' : ''), text: 'Druck', onclick: ev => { settings.pressure = !settings.pressure; saveSettings(); ev.currentTarget.classList.toggle('on', settings.pressure); } }));
+    bar.append(h('button', { class: 'chip' + (symMode !== 'off' ? ' on' : ''), text: 'Symmetrie: ' + SYMS.find(x => x[0] === symMode)[1], onclick: () => { const i = SYMS.findIndex(x => x[0] === symMode); symMode = SYMS[(i + 1) % SYMS.length][0]; buildOpts(); invalidate(); } }));
+    if (t.id === 'snow') bar.append(h('span', { class: 'hint', text: 'Tipp: Farbe Weiß auf farbigem Papier' }));
   } else if (t.id === 'fill') {
     bar.append(slider('Toleranz', 0, 120, t.tol, v => v, v => { t.tol = v; }));
     bar.append(h('button', { class: 'chip' + (t.allLayers ? ' on' : ''), text: 'Alle Ebenen beachten', onclick: ev => { t.allLayers = !t.allLayers; ev.currentTarget.classList.toggle('on', t.allLayers); } }));
@@ -1068,7 +1179,7 @@ let deferredInstall = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; });
 
 (async function init() {
-  buildTools(); buildOpts(); buildColors(); updateUndoBtns(); resize();
+  buildTools(); buildOpts(); buildColors(); updateUndoBtns(); resize(); $('#zGrid').classList.toggle('on', !!settings.guides);
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
   let ok = false;
   try { const last = localStorage.getItem('km_last'); if (last) ok = await loadDoc(last); } catch (e) {}
