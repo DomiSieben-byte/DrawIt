@@ -539,7 +539,7 @@ function beginShape(e) {
 function drawShape(s) {
   const x = buf.getContext('2d'); x.clearRect(0, 0, doc.w, doc.h);
   const a = s.start, b = s.cur, t = s.tool;
-  x.lineWidth = Math.max(1, mmToPx(t.mm)); x.lineJoin = 'round'; x.lineCap = 'round';
+  x.lineWidth = Math.max(1, mmToPx(t.mm)); x.lineJoin = 'round'; x.lineCap = t.kind === 'line' ? 'butt' : 'round';
   x.strokeStyle = s.color; x.fillStyle = s.color;
   x.beginPath();
   if (t.kind === 'line') { x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); x.stroke(); }
