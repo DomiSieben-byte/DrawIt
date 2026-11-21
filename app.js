@@ -189,7 +189,7 @@ function fitView() {
 function render() {
   const W = cv.width, H = cv.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#2b2d33'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#efe6d9'; ctx.fillRect(0, 0, W, H);
   $('#zFit').textContent = doc ? Math.round(view.s * 100) + '%' : '';
   if (!doc) return;
   ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.x, dpr * view.y);
@@ -767,7 +767,7 @@ function refreshLayers() {
   P.append(list);
   const L = activeLayer();
   const op = h('input', { type: 'range', min: 0, max: 100, value: Math.round(L.opacity * 100) });
-  const opl = h('b', { text: Math.round(L.opacity * 100) + '%', style: 'width:42px;text-align:right;color:#eee' });
+  const opl = h('b', { text: Math.round(L.opacity * 100) + '%', style: 'width:42px;text-align:right' });
   op.oninput = () => { L.opacity = op.value / 100; opl.textContent = op.value + '%'; invalidate(); };
   op.onchange = () => { refreshLayers(); markDirty(); };
   const bl = h('select', {}, [['source-over', 'Normal'], ['multiply', 'Multiplizieren'], ['screen', 'Aufhellen (Screen)'], ['overlay', 'Überlagern']].map(([v, n]) => h('option', { value: v, text: n })));
