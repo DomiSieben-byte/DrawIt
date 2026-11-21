@@ -1328,7 +1328,8 @@ const DB = {
   del(id) { return this.tx('readwrite', s => s.delete(id)); },
 };
 let saveTimer = null, saving = false, pending = false, saveWarned = false;
-function markDirty() { clearTimeout(saveTimer); saveTimer = setTimeout(saveDoc, 2500); }
+function setSaveState(ok) { const b = $('#btnSave'); if (!b) return; b.textContent = ok ? '✓ Gespeichert' : '💾 Speichern'; b.classList.toggle('saved', ok); }
+function markDirty() { setSaveState(false); clearTimeout(saveTimer); saveTimer = setTimeout(saveDoc, 2500); }
 async function saveDoc() {
   if (!doc) return;
   if (saving) { pending = true; return; }
@@ -1349,6 +1350,7 @@ async function saveDoc() {
     const thumb = await canvasToBlob(th, 'image/jpeg', 0.8);
     await DB.put({ id: d.id, name: d.name, fmt: d.fmt, dpi: d.dpi, paper: d.paper, w: d.w, h: d.h, mm: d.mm, fold: d.fold, cur: d.cur, updated: Date.now(), thumb, pages });
     try { localStorage.setItem('km_last', d.id); } catch (e) {}
+    if (!pending) setSaveState(true);
   } catch (e) { console.warn('Speichern fehlgeschlagen', e); if (!saveWarned) { saveWarned = true; toast('Automatisches Speichern ist hier nicht möglich – bitte als PDF/Bild exportieren', 5000); } }
   saving = false;
   if (pending) { pending = false; markDirty(); }
@@ -1508,6 +1510,8 @@ function exportDialog() {
 /* ================= Start ================= */
 $('#btnMenu').onclick = menuDialog;
 $('#btnExport').onclick = () => doc && exportDialog();
+$('#btnGallery').onclick = galleryDialog;
+$('#btnSave').onclick = async () => { if (!doc) return; await saveDoc(); toast('Gespeichert – du findest die Karte unter „Meine Karten"', 2600); };
 $('#btnUndo').onclick = undo;
 $('#btnRedo').onclick = redo;
 $('#docName').onclick = () => {

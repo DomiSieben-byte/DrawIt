@@ -141,3 +141,6 @@ input[type=range]{accent-color:var(--acc);height:32px}
 .ptab.on{background:var(--acc);color:#fff}
 #printArea img{width:100%;display:block;page-break-after:always}
 #printArea img:last-child{page-break-after:auto}
+
+#btnSave.saved{background:#e2f3e8;color:#1f6b3a}
+@media (max-width:900px){#btnGallery,#btnSave{padding:0 8px;font-size:13px}}
