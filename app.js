@@ -73,7 +73,10 @@ const PAPERS = ['#ffffff', '#fbf3e0', '#d8bb8c', '#b3261e', '#1f5a3a', '#1b2a4a'
 const PALETTE = ['#000000', '#ffffff', '#b3261e', '#e53935', '#ff8a80', '#ef6c00', '#f9a825', '#fff176', '#1b5e20', '#2e7d32', '#81c784', '#0277bd', '#4fc3f7', '#283593', '#6a1b9a', '#ec407a', '#6d4c41', '#bcaaa4', '#9e9e9e', '#d4af37', '#c0c0c0'];
 const EMOJIS = ['🎄', '⭐', '❄️', '🎁', '🔔', '🕯️', '🦌', '🎅', '🤶', '⛄', '🌟', '✨', '🍪', '🧦', '🕊️', '❤️', '🎀', '🍬', '🌲', '🍊'];
 const FONTS = [
-  ['Sans', 'sans-serif'], ['Serif', 'serif'], ['Schreibschrift', 'cursive'], ['Dick', '"Arial Black", Impact, sans-serif'], ['Schreibmaschine', 'monospace']
+  { n: 'Rund & freundlich', f: 'Fredoka' }, { n: 'Weihnachtlich', f: 'Mountains of Christmas' }, { n: 'Schwungvoll', f: 'Dancing Script' },
+  { n: 'Pacifico', f: 'Pacifico' }, { n: 'Great Vibes', f: 'Great Vibes' }, { n: 'Parisienne', f: 'Parisienne' }, { n: 'Sacramento', f: 'Sacramento' },
+  { n: 'Satisfy', f: 'Satisfy' }, { n: 'Handschrift', f: 'Caveat' }, { n: 'Kinderschrift', f: 'Indie Flower' }, { n: 'Kaushan', f: 'Kaushan Script' },
+  { n: 'Lobster', f: 'Lobster' }, { n: 'Henny Penny', f: 'Henny Penny' }, { n: 'Schmal', f: 'Amatic SC' }, { n: 'Elegant', f: 'Playfair Display' }, { n: 'Klassisch', f: 'Merriweather' },
 ];
 
 const TOOLS = [
@@ -91,9 +94,9 @@ const TOOLS = [
   { id: 'fill', name: 'Füllen', icon: '🪣', tol: 40, allLayers: true },
   { id: 'pick', name: 'Pipette', icon: '🧪' },
   { id: 'shape', name: 'Form', icon: '◻️', mm: 0.9, op: 1, kind: 'line', filled: false },
-  { id: 'text', name: 'Text', icon: '🔤', font: 0, bold: false, italic: false, mm: 10, txt: '' },
+  { id: 'text', name: 'Text', icon: '🔤', font: 2, bold: false, italic: false, mm: 12, txt: '' },
   { id: 'stamp', name: 'Stempel', icon: '🎄', mm: 16, emoji: '🎄', rotate: true },
-  { id: 'move', name: 'Schieben', icon: '✥' },
+  { id: 'move', name: 'Transform', icon: '✥' },
 ];
 const T = id => TOOLS.find(t => t.id === id);
 
@@ -110,7 +113,7 @@ let sawPen = false;
 let dirty = true;
 const hist = { u: [], r: [] };
 const HMAX = 60;
-const MAX_LAYERS = 12;
+const MAX_LAYERS = 16;
 
 const cv = $('#view');
 const ctx = cv.getContext('2d', { alpha: false, desynchronized: true });
@@ -151,12 +154,13 @@ function afterDocChange(fit) {
 
 /* ================= Verlauf (Rückgängig) ================= */
 function pushHist(e) {
+  doc.layers.forEach(l => { l._bb = null; });
   hist.u.push(e); if (hist.u.length > HMAX) hist.u.shift();
   hist.r.length = 0; updateUndoBtns(); markDirty();
 }
 function undo() { const e = hist.u.pop(); if (!e) return; e.undo(); hist.r.push(e); afterHist(); }
 function redo() { const e = hist.r.pop(); if (!e) return; e.redo(); hist.u.push(e); afterHist(); }
-function afterHist() { updateUndoBtns(); refreshLayers(); invalidate(); markDirty(); }
+function afterHist() { doc.layers.forEach(l => { l._bb = null; }); updateUndoBtns(); refreshLayers(); invalidate(); markDirty(); }
 function updateUndoBtns() { $('#btnUndo').disabled = !hist.u.length; $('#btnRedo').disabled = !hist.r.length; }
 function restoreRect(L, x, y, c) {
   L.ctx.clearRect(x, y, c.width, c.height); L.ctx.drawImage(c, x, y);
@@ -215,6 +219,7 @@ function render() {
   });
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   drawGuides();
+  if (curTool.id === 'move') drawXformOverlay();
   // Pinsel-Ring
   if (hover && curTool.brush && !S) {
     const r = Math.max(2, mmToPx(curTool.mm) / 2 * view.s);
@@ -416,7 +421,7 @@ function stampSym(x2, tool, x, y, p, col, box) {
 function beginStroke(e) {
   const L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
   let tool = curTool;
   if (e.pointerType === 'pen' && (e.buttons & 32)) tool = T('eraser');
   const pt = docPt(e);
@@ -481,7 +486,7 @@ function endStroke(e, cancel) {
 function cancelDraw(s) {
   if (s.tool && s.tool.id === 'eraser') s.L.ctx.restore();
   if (s.snap && !s.kind) { s.L.ctx.clearRect(0, 0, doc.w, doc.h); s.L.ctx.drawImage(s.snap, 0, 0); }
-  if (s.kind === 'move') { s.L.ctx.clearRect(0, 0, doc.w, doc.h); s.L.ctx.drawImage(s.snap, 0, 0); }
+  if (s.kind === 'xform') cancelXform(s);
   buf.getContext('2d').clearRect(0, 0, doc.w, doc.h);
   invalidate();
 }
@@ -491,7 +496,7 @@ function cancelStroke() { if (S) { const s = S; S = null; cancelDraw(s); } }
 function beginShape(e) {
   const L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
   const pt = docPt(e);
   S = { kind: 'shape', tool: curTool, L, pid: e.pointerId, snap: copyCanvas(L.canvas), start: pt, cur: pt, buf: true, color };
   buf.getContext('2d').clearRect(0, 0, doc.w, doc.h);
@@ -513,12 +518,6 @@ function drawShape(s) {
   invalidate();
 }
 
-/* ---- Schieben ---- */
-function beginMove(e) {
-  const L = activeLayer();
-  if (!L || L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
-  S = { kind: 'move', tool: curTool, L, pid: e.pointerId, snap: copyCanvas(L.canvas), start: docPt(e), dx: 0, dy: 0 };
-}
 function endSpecial(s) {
   if (s.kind === 'shape') {
     const w = mmToPx(s.tool.mm) + 4;
@@ -530,11 +529,8 @@ function endSpecial(s) {
       commitBox(s.L, s.snap, box);
     }
     buf.getContext('2d').clearRect(0, 0, doc.w, doc.h);
-  } else if (s.kind === 'move') {
-    if (Math.abs(s.dx) + Math.abs(s.dy) > 0.5) {
-      const before = s.snap, after = copyCanvas(s.L.canvas), L = s.L;
-      pushHist({ undo: () => restoreRect(L, 0, 0, before), redo: () => restoreRect(L, 0, 0, after) });
-    }
+  } else if (s.kind === 'xform') {
+    endXform(s);
   }
   refreshLayers(); invalidate();
 }
@@ -543,7 +539,7 @@ function endSpecial(s) {
 function floodFill(px, py) {
   const L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
   const w = doc.w, hh = doc.h, t = curTool;
   const x0 = Math.floor(px), y0 = Math.floor(py);
   if (x0 < 0 || y0 < 0 || x0 >= w || y0 >= hh) return;
@@ -605,7 +601,7 @@ function pickColor(e) {
 function placeStamp(pt) {
   const L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
   const t = curTool, size = mmToPx(t.mm), snap = copyCanvas(L.canvas);
   L.ctx.save(); L.ctx.translate(pt.x, pt.y);
   if (t.rotate) L.ctx.rotate((Math.random() - 0.5) * 0.7);
@@ -617,48 +613,213 @@ function placeStamp(pt) {
   commitBox(L, snap, b); refreshLayers(); invalidate();
 }
 
+/* ================= Objekte (Text, Foto) & Transformieren ================= */
+const scratch = makeCanvas(2, 2).getContext('2d');
+const fontStr = (o, px) => `${o.italic ? 'italic ' : ''}${o.bold ? '700' : '400'} ${px}px "${FONTS[o.font].f}", sans-serif`;
+const ensureFont = o => (o.kind === 'text' && document.fonts) ? document.fonts.load(fontStr(o, 40), o.text || 'A').catch(() => {}) : Promise.resolve();
+function objSize(o) {
+  if (o.kind === 'text') {
+    const px = mmToPx(o.mm); scratch.font = fontStr(o, px);
+    const lines = String(o.text).split('\n'); let w = 10;
+    for (const l of lines) w = Math.max(w, scratch.measureText(l).width);
+    return { w: w + px * 0.2, h: lines.length * px * 1.25, lh: px * 1.25, lines, px };
+  }
+  if (o.kind === 'image') return { w: o.img.width, h: o.img.height };
+  if (o.kind === 'svg' && window.svgSize) return window.svgSize(o);
+  return { w: 100, h: 100 };
+}
+function drawObjBase(x, o, sz) {
+  if (o.kind === 'text') {
+    x.font = fontStr(o, sz.px); x.fillStyle = o.color; x.textAlign = 'center'; x.textBaseline = 'middle';
+    sz.lines.forEach((l, i) => x.fillText(l, 0, -sz.h / 2 + sz.lh / 2 + i * sz.lh));
+  } else if (o.kind === 'image') { x.imageSmoothingQuality = 'high'; x.drawImage(o.img, -sz.w / 2, -sz.h / 2); }
+  else if (o.kind === 'svg' && window.svgDraw) window.svgDraw(x, o, sz);
+}
+function renderObj(L) {
+  const o = L.obj, c = L.ctx;
+  c.clearRect(0, 0, doc.w, doc.h); L._bb = null;
+  if (!o) return;
+  const sz = objSize(o);
+  c.save(); c.translate(o.x, o.y); c.rotate(o.r || 0); c.scale(o.s * (o.fx || 1), o.s);
+  drawObjBase(c, o, sz); c.restore();
+}
+function flatten(L) { if (L.obj) { L.obj = null; if (/^(🔤|🖼️|✨|🖼) /.test(L.name)) L.name = L.name.replace(/^\S+ /, ''); toast('Objekt wurde in normale Ebene umgewandelt', 1800); refreshLayers(); } }
+function addObjLayer(obj, name) {
+  if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return null; }
+  const L = newLayer(name); L.obj = obj; renderObj(L);
+  const i = doc.active + 1, prev = doc.active;
+  doc.layers.splice(i, 0, L); doc.active = i;
+  pushHist({ undo: () => { doc.layers.splice(doc.layers.indexOf(L), 1); doc.active = Math.min(prev, doc.layers.length - 1); }, redo: () => { doc.layers.splice(i, 0, L); doc.active = i; } });
+  refreshLayers(); invalidate(); return L;
+}
+function objHist(L, before, after) {
+  const apply = o => () => { L.obj = { ...o }; renderObj(L); if (o.kind === 'text' && /^🔤 /.test(L.name)) L.name = '🔤 ' + short(o.text); };
+  pushHist({ undo: apply(before), redo: apply(after) });
+}
+const short = t => String(t).replace(/\s+/g, ' ').trim().slice(0, 18);
+
 /* ---- Text ---- */
-function textDialog(pt) {
-  const L = activeLayer();
-  if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
-  const t = curTool;
-  const ta = h('textarea', { placeholder: 'Frohe Weihnachten!' }); ta.value = t.txt || '';
-  const fontSel = h('select', {}, FONTS.map((f, i) => h('option', { value: i, text: f[0] })));
-  fontSel.value = t.font;
-  const bold = h('button', { class: 'chip' + (t.bold ? ' on' : ''), text: 'Fett', onclick: ev => { t.bold = !t.bold; ev.target.classList.toggle('on', t.bold); } });
-  const ital = h('button', { class: 'chip' + (t.italic ? ' on' : ''), text: 'Kursiv', onclick: ev => { t.italic = !t.italic; ev.target.classList.toggle('on', t.italic); } });
-  const sz = h('input', { type: 'range', min: 3, max: 60, value: t.mm });
-  const szl = h('b', { text: t.mm + ' mm' }); sz.oninput = () => { szl.textContent = sz.value + ' mm'; };
+function textDialog(pt, L) {
+  const edit = !!(L && L.obj && L.obj.kind === 'text');
+  const t = curTool, o = edit ? { ...L.obj } : { kind: 'text', text: t.txt || '', font: t.font, bold: t.bold, italic: t.italic, mm: t.mm, color };
+  const ta = h('textarea', { placeholder: 'Frohe Weihnachten!' }); ta.value = o.text;
+  const fontBox = h('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fill,minmax(150px,1fr));max-height:230px;overflow-y:auto' });
+  const drawFonts = () => {
+    fontBox.innerHTML = '';
+    FONTS.forEach((f, i) => fontBox.append(h('button', { class: 'opt-btn' + (o.font === i ? ' on' : ''), style: `font-family:"${f.f}",sans-serif;font-size:21px;padding:8px;font-weight:${o.bold ? 700 : 400};font-style:${o.italic ? 'italic' : 'normal'}`, onclick: () => { o.font = i; drawFonts(); } }, ta.value.split('\n')[0].trim().slice(0, 14) || 'Weihnachten')));
+  };
+  drawFonts(); ta.oninput = drawFonts;
+  const bold = h('button', { class: 'chip' + (o.bold ? ' on' : ''), text: 'Fett', onclick: ev => { o.bold = !o.bold; ev.currentTarget.classList.toggle('on', o.bold); drawFonts(); } });
+  const ital = h('button', { class: 'chip' + (o.italic ? ' on' : ''), text: 'Kursiv', onclick: ev => { o.italic = !o.italic; ev.currentTarget.classList.toggle('on', o.italic); drawFonts(); } });
+  const sz = h('input', { type: 'range', min: 3, max: 80, value: Math.round(o.mm), style: 'flex:1' }), szl = h('b', { text: Math.round(o.mm) + ' mm', style: 'width:54px' });
+  sz.oninput = () => { szl.textContent = sz.value + ' mm'; };
+  const swatch = h('span', { style: 'display:inline-block;width:26px;height:26px;border-radius:50%;border:2px solid #0004;vertical-align:middle;background:' + (edit ? o.color : color) });
   const body = h('div', {},
     h('label', { class: 'fld' }, h('span', { text: 'Text' }), ta),
-    h('label', { class: 'fld' }, h('span', { text: 'Schrift' }), fontSel),
-    h('div', { class: 'fld' }, h('span', { text: 'Stil & Größe (Schrifthöhe)' }), h('div', { style: 'display:flex;gap:8px;align-items:center' }, bold, ital, sz, szl)));
-  openModal('Text einfügen', body, [
+    h('div', { class: 'fld' }, h('span', { text: 'Schrift' }), fontBox),
+    h('div', { class: 'fld' }, h('span', { text: 'Stil & Größe' }), h('div', { style: 'display:flex;gap:8px;align-items:center' }, bold, ital, sz, szl)),
+    h('div', { class: 'hint' }, 'Farbe: ', swatch, edit ? ' (bleibt – zum Ändern die gewünschte Farbe wählen und „Farbe übernehmen“ tippen)' : ' = aktuell gewählte Farbe'));
+  openModal(edit ? 'Text ändern' : 'Text einfügen', body, [
     { label: 'Abbrechen' },
-    { label: 'Einfügen', cls: 'pri', fn: () => {
+    { label: edit ? 'Übernehmen' : 'Einfügen', cls: 'pri', fn: async () => {
       const text = ta.value.trim(); if (!text) return false;
-      t.txt = ta.value; t.font = +fontSel.value; t.mm = +sz.value;
-      drawText(L, pt, text, t);
+      o.text = text; o.mm = +sz.value; t.txt = text; t.font = o.font; t.bold = o.bold; t.italic = o.italic; t.mm = o.mm;
+      await ensureFont(o);
+      if (edit) { const before = { ...L.obj }; L.obj = { ...o }; L.name = '🔤 ' + short(text); renderObj(L); objHist(L, before, L.obj); refreshLayers(); invalidate(); }
+      else {
+        const base = { ...o, x: pt.x, y: pt.y, s: 1, r: 0, fx: 1 };
+        const nl = addObjLayer(base, '🔤 ' + short(text)); if (nl) { addRecent(color); selectTool('move'); toast('Ziehen = verschieben · Ecke = Größe · Kreis = drehen', 3500); }
+      }
+      invalidate();
     } },
   ]);
   setTimeout(() => ta.focus(), 100);
 }
-function drawText(L, pt, text, t) {
-  const size = mmToPx(t.mm), snap = copyCanvas(L.canvas), x = L.ctx;
-  x.save();
-  x.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${size}px ${FONTS[t.font][1]}`;
-  x.fillStyle = color; x.textAlign = 'center'; x.textBaseline = 'middle';
-  const lines = text.split('\n'), lh = size * 1.25;
-  let maxW = 0;
-  lines.forEach((ln, i) => {
-    const yy = pt.y - (lines.length * lh) / 2 + lh / 2 + i * lh;
-    x.fillText(ln, pt.x, yy); maxW = Math.max(maxW, x.measureText(ln).width);
-  });
-  x.restore();
-  const b = newBox(); grow(b, pt.x - maxW / 2, pt.y - lines.length * lh / 2, 0); grow(b, pt.x + maxW / 2, pt.y + lines.length * lh / 2, 0);
-  b.x0 -= size * .4; b.x1 += size * .4; b.y0 -= size * .4; b.y1 += size * .4;
-  commitBox(L, snap, b); addRecent(color); refreshLayers(); invalidate();
+
+/* ---- Transformieren (Schieben, Skalieren, Drehen) ---- */
+function scanBox(L) {
+  const k = 4, sw = Math.ceil(doc.w / k), sh = Math.ceil(doc.h / k), c = makeCanvas(sw, sh), x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(L.canvas, 0, 0, sw, sh);
+  const d = x.getImageData(0, 0, sw, sh).data; let x0 = sw, y0 = sh, x1 = -1, y1 = -1;
+  for (let y = 0; y < sh; y++) for (let xx = 0; xx < sw; xx++) if (d[(y * sw + xx) * 4 + 3] > 6) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return null;
+  const px0 = Math.max(0, x0 * k - 2), py0 = Math.max(0, y0 * k - 2), px1 = Math.min(doc.w, (x1 + 1) * k + 2), py1 = Math.min(doc.h, (y1 + 1) * k + 2);
+  return { x: px0, y: py0, w: px1 - px0, h: py1 - py0 };
+}
+function layerBox(L) {
+  if (!L) return null;
+  if (L.obj) { const sz = objSize(L.obj); return { cx: L.obj.x, cy: L.obj.y, w: sz.w * L.obj.s, h: sz.h * L.obj.s, r: L.obj.r || 0 }; }
+  if (L._bb == null) L._bb = scanBox(L) || false;
+  return L._bb ? { cx: L._bb.x + L._bb.w / 2, cy: L._bb.y + L._bb.h / 2, w: L._bb.w, h: L._bb.h, r: 0 } : null;
+}
+function boxGeom(b) {
+  const c = Math.cos(b.r), sn = Math.sin(b.r), sx = view.x + b.cx * view.s, sy = view.y + b.cy * view.s, hw = b.w * view.s / 2, hh = b.h * view.s / 2;
+  const P = (x, y) => ({ x: sx + x * c - y * sn, y: sy + x * sn + y * c });
+  return { cx: sx, cy: sy, corners: [P(-hw, -hh), P(hw, -hh), P(hw, hh), P(-hw, hh)], rot: P(0, -hh - 38), top: P(0, -hh) };
+}
+function drawXformOverlay() {
+  const L = activeLayer(); if (!L) return;
+  const b = (S && S.kind === 'xform') ? S.box() : layerBox(L); if (!b) return;
+  const g = boxGeom(b);
+  ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (S && S.kind === 'xform') {
+    ctx.strokeStyle = 'rgba(155,60,200,.8)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 5]); ctx.beginPath();
+    if (S.snapX) { const x = view.x + doc.w / 2 * view.s; ctx.moveTo(x, 0); ctx.lineTo(x, cv.height / dpr); }
+    if (S.snapY) { const y = view.y + doc.h / 2 * view.s; ctx.moveTo(0, y); ctx.lineTo(cv.width / dpr, y); }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.strokeStyle = '#d9453d'; ctx.lineWidth = 2; ctx.setLineDash([7, 5]); ctx.beginPath();
+  g.corners.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(g.top.x, g.top.y); ctx.lineTo(g.rot.x, g.rot.y); ctx.stroke();
+  const dot = (p, fill) => { ctx.beginPath(); ctx.arc(p.x, p.y, 11, 0, TAU); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#d9453d'; ctx.stroke(); };
+  g.corners.forEach(p => dot(p, '#fff')); dot(g.rot, '#d9453d');
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⟳', g.rot.x, g.rot.y + 1);
+  ctx.restore();
+}
+function hitHandle(b, sp) {
+  const g = boxGeom(b), R = 26;
+  if (Math.hypot(sp.x - g.rot.x, sp.y - g.rot.y) < R) return 'rotate';
+  for (const p of g.corners) if (Math.hypot(sp.x - p.x, sp.y - p.y) < R) return 'scale';
+  return 'move';
+}
+function beginXform(e) {
+  const L = activeLayer();
+  if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
+  const b0 = layerBox(L); if (!b0) { toast('Diese Ebene ist leer'); return; }
+  const r = cv.getBoundingClientRect(), sp = { x: e.clientX - r.left, y: e.clientY - r.top }, mode = hitHandle(b0, sp), pt = docPt(e);
+  let o, raster = null;
+  if (L.obj) o = L.obj;
+  else {
+    const bb = L._bb;
+    raster = { src: cropCanvas(L.canvas, bb.x, bb.y, bb.w, bb.h), w: bb.w, h: bb.h, before: copyCanvas(L.canvas) };
+    o = { x: b0.cx, y: b0.cy, s: 1, r: 0 };
+  }
+  S = {
+    kind: 'xform', pid: e.pointerId, L, mode, o, raster, startPt: pt, start: { x: o.x, y: o.y, s: o.s, r: o.r || 0 },
+    startAng: Math.atan2(pt.y - o.y, pt.x - o.x), startDist: Math.max(5, Math.hypot(pt.x - o.x, pt.y - o.y)), before: L.obj ? { ...L.obj } : null, moved: false,
+    box() { return raster ? { cx: this.o.x, cy: this.o.y, w: raster.w * this.o.s, h: raster.h * this.o.s, r: this.o.r || 0 } : layerBox(this.L); },
+  };
+  invalidate();
+}
+function applyXform(s) {
+  if (s.L.obj) renderObj(s.L);
+  else {
+    const c = s.L.ctx, rs = s.raster; c.clearRect(0, 0, doc.w, doc.h); c.save();
+    c.translate(s.o.x, s.o.y); c.rotate(s.o.r || 0); c.scale(s.o.s, s.o.s); c.imageSmoothingQuality = 'high'; c.drawImage(rs.src, -rs.w / 2, -rs.h / 2); c.restore();
+  }
+  invalidate();
+}
+function moveXform(pt) {
+  const s = S, o = s.o; s.moved = true;
+  if (s.mode === 'move') {
+    let nx = s.start.x + pt.x - s.startPt.x, ny = s.start.y + pt.y - s.startPt.y;
+    s.snapX = Math.abs(nx - doc.w / 2) * view.s < 9; s.snapY = Math.abs(ny - doc.h / 2) * view.s < 9;
+    if (s.snapX) nx = doc.w / 2; if (s.snapY) ny = doc.h / 2;
+    o.x = nx; o.y = ny;
+  } else if (s.mode === 'scale') {
+    o.s = clamp(s.start.s * Math.hypot(pt.x - s.start.x, pt.y - s.start.y) / s.startDist, 0.02, 60);
+  } else {
+    let a = s.start.r + (Math.atan2(pt.y - s.start.y, pt.x - s.start.x) - s.startAng);
+    const step = Math.PI / 12, nearest = Math.round(a / step) * step;
+    if (Math.abs(a - nearest) < 0.06) a = nearest;
+    o.r = a;
+  }
+  applyXform(s);
+}
+function endXform(s) {
+  const L = s.L;
+  if (!s.moved) { invalidate(); return; }
+  if (L.obj) objHist(L, s.before, { ...L.obj });
+  else { const before = s.raster.before, after = copyCanvas(L.canvas); pushHist({ undo: () => restoreRect(L, 0, 0, before), redo: () => restoreRect(L, 0, 0, after) }); }
+  refreshLayers(); invalidate();
+}
+function cancelXform(s) {
+  if (s.L.obj) { s.L.obj = s.before; renderObj(s.L); } else restoreRect(s.L, 0, 0, s.raster.before);
+}
+// Sofort-Aktionen (Mitte, Spiegeln)
+function xformAction(kind) {
+  const L = activeLayer(); if (!L || L.locked) { toast('Ebene gesperrt'); return; }
+  const b = layerBox(L); if (!b) return;
+  if (L.obj) {
+    const before = { ...L.obj };
+    if (kind === 'center') { L.obj.x = doc.w / 2; L.obj.y = doc.h / 2; } else L.obj.fx = -(L.obj.fx || 1);
+    renderObj(L); objHist(L, before, { ...L.obj });
+  } else {
+    const before = copyCanvas(L.canvas), c = L.ctx;
+    c.clearRect(0, 0, doc.w, doc.h); c.save();
+    if (kind === 'center') c.translate(doc.w / 2 - b.cx, doc.h / 2 - b.cy); else { c.translate(b.cx, 0); c.scale(-1, 1); c.translate(-b.cx, 0); }
+    c.drawImage(before, 0, 0); c.restore();
+    const after = copyCanvas(L.canvas); pushHist({ undo: () => restoreRect(L, 0, 0, before), redo: () => restoreRect(L, 0, 0, after) });
+  }
+  refreshLayers(); invalidate();
+}
+function objSlider(label, min, max, get, set, fmt) {
+  const L = activeLayer(); let st = null;
+  const inp = h('input', { type: 'range', min, max, value: get(L.obj) }), out = h('b', { text: fmt(get(L.obj)) });
+  inp.oninput = () => { if (!st) st = { ...L.obj }; set(L.obj, +inp.value); out.textContent = fmt(+inp.value); renderObj(L); invalidate(); };
+  inp.onchange = () => { if (st) { objHist(L, st, { ...L.obj }); st = null; refreshLayers(); } };
+  return h('div', { class: 'opt' }, label, inp, out);
 }
 
 /* ================= Eingabe ================= */
@@ -705,7 +866,7 @@ cv.addEventListener('pointerdown', e => {
   if (id === 'stamp') { placeStamp(docPt(e)); return; }
   if (id === 'text') { textDialog(docPt(e)); return; }
   if (id === 'shape') { beginShape(e); return; }
-  if (id === 'move') { beginMove(e); return; }
+  if (id === 'move') { beginXform(e); return; }
   beginStroke(e);
 });
 cv.addEventListener('pointermove', e => {
@@ -720,10 +881,7 @@ cv.addEventListener('pointermove', e => {
   if (S.kind === 'pick') { pickColor(e); return; }
   const pt = docPt(e);
   if (S.kind === 'shape') { S.cur = pt; drawShape(S); return; }
-  if (S.kind === 'move') {
-    S.dx = pt.x - S.start.x; S.dy = pt.y - S.start.y;
-    S.L.ctx.clearRect(0, 0, doc.w, doc.h); S.L.ctx.drawImage(S.snap, Math.round(S.dx), Math.round(S.dy)); invalidate(); return;
-  }
+  if (S.kind === 'xform') { moveXform(pt); return; }
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
   if (evs.length) evs.forEach(ce => strokeTo(ce)); else strokeTo(e);
 });
@@ -810,13 +968,23 @@ function buildOpts() {
     bar.append(sizeSl('Linie'));
     bar.append(slider('Deckkraft', 5, 100, Math.round(t.op * 100), v => v + '%', v => { t.op = v / 100; }));
   } else if (t.id === 'text') {
-    bar.append(h('span', { class: 'hint', text: 'Auf die Karte tippen, dann Text eingeben. Farbe = aktuelle Farbe.' }));
+    bar.append(h('span', { class: 'hint', text: 'Auf die Karte tippen, dann Text eingeben. Danach lässt er sich mit „Transform“ bewegen, drehen und ändern.' }));
   } else if (t.id === 'stamp') {
     EMOJIS.forEach(em => bar.append(h('button', { class: 'chip em' + (t.emoji === em ? ' on' : ''), text: em, onclick: () => { t.emoji = em; buildTools(); buildOpts(); } })));
     bar.append(sizeSl('Größe'));
     bar.append(h('button', { class: 'chip' + (t.rotate ? ' on' : ''), text: 'Leicht drehen', onclick: ev => { t.rotate = !t.rotate; ev.currentTarget.classList.toggle('on', t.rotate); } }));
   } else if (t.id === 'move') {
-    bar.append(h('span', { class: 'hint', text: 'Inhalt der gewählten Ebene verschieben (Ziehen)' }));
+    const L = activeLayer();
+    if (L && L.obj) {
+      if (L.obj.kind === 'text') {
+        bar.append(h('button', { class: 'chip', text: '✎ Text ändern', onclick: () => textDialog(null, L) }));
+        bar.append(h('button', { class: 'chip', text: 'Farbe übernehmen', onclick: () => { const before = { ...L.obj }; L.obj.color = color; renderObj(L); objHist(L, before, { ...L.obj }); invalidate(); } }));
+      }
+      bar.append(objSlider('Größe', 5, 400, o => Math.round(o.s * 100), (o, v) => { o.s = v / 100; }, v => v + '%'));
+      bar.append(objSlider('Drehung', -180, 180, o => Math.round((o.r || 0) * 180 / Math.PI), (o, v) => { o.r = v * Math.PI / 180; }, v => v + '°'));
+    } else bar.append(h('span', { class: 'hint', text: 'Ziehen = verschieben · Ecke = Größe · Kreis = drehen (gilt für die gewählte Ebene)' }));
+    bar.append(h('button', { class: 'chip', text: 'In die Mitte', onclick: () => xformAction('center') }));
+    bar.append(h('button', { class: 'chip', text: 'Spiegeln', onclick: () => xformAction('flip') }));
   }
 }
 
@@ -862,6 +1030,7 @@ let panelOpen = false;
 $('#btnLayers').onclick = () => { panelOpen = !panelOpen; $('#layersPanel').classList.toggle('hidden', !panelOpen); $('#btnLayers').classList.toggle('on', panelOpen); setTimeout(() => { resize(); fitView(); }, 30); refreshLayers(); };
 
 function refreshLayers() {
+  if (doc && curTool.id === 'move' && !(S && S.kind === 'xform')) buildOpts();
   if (!panelOpen || !doc) return;
   const P = $('#layersPanel'); P.innerHTML = '';
   P.append(h('div', { class: 'lhead' }, h('span', { text: 'Ebenen (' + doc.layers.length + ')' }), h('button', { class: 'chip', text: '✕', onclick: () => $('#btnLayers').click() })));
@@ -1017,13 +1186,11 @@ $('#fileIn').onchange = async ev => {
   const f = ev.target.files[0]; ev.target.value = ''; if (!f || !doc) return;
   if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return; }
   try {
-    const bmp = await createImageBitmap(f);
-    const L = newLayer('Bild'), sc = Math.min(doc.w / bmp.width, doc.h / bmp.height, 1) * 0.9;
-    const w = bmp.width * sc, hh = bmp.height * sc;
-    L.ctx.drawImage(bmp, (doc.w - w) / 2, (doc.h - hh) / 2, w, hh);
-    const i = doc.active + 1, prev = doc.active; doc.layers.splice(i, 0, L); doc.active = i;
-    pushHist({ undo: () => { doc.layers.splice(doc.layers.indexOf(L), 1); doc.active = Math.min(prev, doc.layers.length - 1); }, redo: () => { doc.layers.splice(i, 0, L); doc.active = i; } });
-    refreshLayers(); invalidate(); toast('Bild eingefügt – mit „Schieben“ positionieren');
+    const bmp = await createImageBitmap(f), lim = Math.min(1, 2600 / Math.max(bmp.width, bmp.height));
+    const img = makeCanvas(Math.round(bmp.width * lim), Math.round(bmp.height * lim)); img.getContext('2d').drawImage(bmp, 0, 0, img.width, img.height);
+    const sc = Math.min(doc.w / img.width, doc.h / img.height) * 0.8;
+    const L = addObjLayer({ kind: 'image', img, x: doc.w / 2, y: doc.h / 2, s: sc, r: 0, fx: 1 }, '🖼️ Foto');
+    if (L) { selectTool('move'); toast('Foto eingefügt: Ziehen = verschieben · Ecke = Größe · Kreis = drehen', 3500); }
   } catch (e) { toast('Bild konnte nicht geladen werden'); }
 };
 
@@ -1057,7 +1224,11 @@ async function saveDoc() {
   try {
     const d = doc;
     const layers = [];
-    for (const L of d.layers) layers.push({ id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, locked: L.locked, blob: await canvasToBlob(L.canvas, 'image/png') });
+    for (const L of d.layers) {
+      const rec = { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, locked: L.locked, blob: await canvasToBlob(L.canvas, 'image/png') };
+      if (L.obj) { const { img, ...rest } = L.obj; rec.obj = rest; if (img) rec.objImg = await canvasToBlob(img, 'image/png'); }
+      layers.push(rec);
+    }
     const th = makeCanvas(240, Math.round(240 * d.h / d.w)); const tx = th.getContext('2d'); tx.fillStyle = '#fff'; tx.fillRect(0, 0, th.width, th.height);
     tx.drawImage(compose(null, 1), 0, 0, th.width, th.height);
     const thumb = await canvasToBlob(th, 'image/jpeg', 0.8);
@@ -1073,6 +1244,10 @@ async function loadDoc(id) {
   for (const l of rec.layers) {
     const L = newLayer(l.name); L.id = l.id; L.visible = l.visible; L.opacity = l.opacity; L.blend = l.blend; L.locked = l.locked;
     const bmp = await createImageBitmap(l.blob); L.ctx.drawImage(bmp, 0, 0); doc.layers.push(L);
+    if (l.obj) {
+      L.obj = { ...l.obj };
+      if (l.objImg) { const ib = await createImageBitmap(l.objImg), ic = makeCanvas(ib.width, ib.height); ic.getContext('2d').drawImage(ib, 0, 0); L.obj.img = ic; }
+    }
   }
   doc.active = Math.min(doc.active, doc.layers.length - 1);
   buf = makeCanvas(doc.w, doc.h); hist.u.length = 0; hist.r.length = 0;
