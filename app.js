@@ -120,7 +120,7 @@ const totalLayers = () => doc.pages.reduce((a, p) => a + p.layers.length, 0);
 const maxLayers = () => Math.max(6, Math.min(MAX_LAYERS * doc.pages.length, Math.floor(420e6 / (doc.w * doc.h * 4))));
 
 const cv = $('#view');
-const ctx = cv.getContext('2d', { alpha: false, desynchronized: true });
+const ctx = cv.getContext('2d', { alpha: false });
 let dpr = 1;
 
 const invalidate = () => { dirty = true; };
@@ -228,10 +228,10 @@ function render() {
   $('#zFit').textContent = doc ? Math.round(view.s * 100) + '%' : '';
   if (!doc) return;
   ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.x, dpr * view.y);
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 26 * dpr; ctx.shadowOffsetY = 6 * dpr;
+  // günstiger Schatten (kein shadowBlur pro Frame): ein paar gestaffelte, transparente Rechtecke
+  ctx.fillStyle = 'rgba(60,35,20,.03)';
+  for (let i = 9; i >= 1; i--) { const g = i * 1.8 / view.s; ctx.fillRect(-g, -g + 4 / view.s, doc.w + 2 * g, doc.h + 2 * g); }
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, doc.w, doc.h);
-  ctx.restore();
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = view.s < 1 ? 'medium' : 'low';
   if (view.s > 2) ctx.imageSmoothingEnabled = false;
   doc.layers.forEach((L, i) => {
