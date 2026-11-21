@@ -95,7 +95,7 @@ const TOOLS = [
   { id: 'pick', name: 'Pipette', icon: '🧪' },
   { id: 'shape', name: 'Form', icon: '◻️', mm: 0.9, op: 1, kind: 'line', filled: false },
   { id: 'text', name: 'Text', icon: '🔤', font: 2, bold: false, italic: false, mm: 12, txt: '' },
-  { id: 'stamp', name: 'Stempel', icon: '🎄', mm: 16, emoji: '🎄', rotate: true },
+  { id: 'stamp', name: 'Sticker', icon: '🎄', mm: 30, emoji: '🎄', item: { cat: 'sticker', key: 'tree' }, rotate: true, movable: true },
   { id: 'move', name: 'Transform', icon: '✥' },
 ];
 const T = id => TOOLS.find(t => t.id === id);
@@ -419,9 +419,9 @@ function stampSym(x2, tool, x, y, p, col, box) {
 }
 
 function beginStroke(e) {
-  const L = activeLayer();
+  let L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } L = rasterTarget(L);
   let tool = curTool;
   if (e.pointerType === 'pen' && (e.buttons & 32)) tool = T('eraser');
   const pt = docPt(e);
@@ -494,9 +494,9 @@ function cancelStroke() { if (S) { const s = S; S = null; cancelDraw(s); } }
 
 /* ---- Formen ---- */
 function beginShape(e) {
-  const L = activeLayer();
+  let L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } L = rasterTarget(L);
   const pt = docPt(e);
   S = { kind: 'shape', tool: curTool, L, pid: e.pointerId, snap: copyCanvas(L.canvas), start: pt, cur: pt, buf: true, color };
   buf.getContext('2d').clearRect(0, 0, doc.w, doc.h);
@@ -537,9 +537,9 @@ function endSpecial(s) {
 
 /* ---- Füllen ---- */
 function floodFill(px, py) {
-  const L = activeLayer();
+  let L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } L = rasterTarget(L);
   const w = doc.w, hh = doc.h, t = curTool;
   const x0 = Math.floor(px), y0 = Math.floor(py);
   if (x0 < 0 || y0 < 0 || x0 >= w || y0 >= hh) return;
@@ -598,10 +598,10 @@ function pickColor(e) {
 }
 
 /* ---- Stempel ---- */
-function placeStamp(pt) {
-  const L = activeLayer();
+function placeEmoji(pt) {
+  let L = activeLayer();
   if (!L || !L.visible) { toast('Diese Ebene ist ausgeblendet'); return; }
-  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } flatten(L);
+  if (L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; } L = rasterTarget(L);
   const t = curTool, size = mmToPx(t.mm), snap = copyCanvas(L.canvas);
   L.ctx.save(); L.ctx.translate(pt.x, pt.y);
   if (t.rotate) L.ctx.rotate((Math.random() - 0.5) * 0.7);
@@ -611,6 +611,79 @@ function placeStamp(pt) {
   L.ctx.restore();
   const b = newBox(); grow(b, pt.x, pt.y, size * 1.2);
   commitBox(L, snap, b); refreshLayers(); invalidate();
+}
+
+/* ================= Sticker-Bibliothek (SVG) ================= */
+const svgCache = new Map();
+const LIB = () => window.DRAWIT_LIB || { sticker: [], frame: [], color: [] };
+const svgItem = o => LIB()[o.cat].find(i => i.k === o.key);
+function svgVb(o) { return o.cat === 'frame' ? [o.vbw, o.vbh] : (svgItem(o).vb || [100, 100]); }
+function svgSource(o) {
+  const it = svgItem(o), [w, hh] = svgVb(o), inner = o.cat === 'frame' ? it.gen(w, hh) : it.body;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${hh}" width="${w}" height="${hh}">${inner}</svg>`;
+}
+const svgKey = o => o.cat + ':' + o.key + (o.cat === 'frame' ? ':' + o.vbw + 'x' + o.vbh : '');
+const svgUrl = o => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgSource(o));
+function svgLoad(o) {
+  const k = svgKey(o); if (svgCache.has(k)) return svgCache.get(k).p;
+  const im = new Image(); const p = new Promise(res => { im.onload = () => res(im); im.onerror = () => res(null); });
+  im.src = svgUrl(o); svgCache.set(k, { im, p }); return p;
+}
+function svgSize(o) { const [w, hh] = svgVb(o); return { w: o.w, h: o.w * hh / w }; }
+function svgDraw(x, o, sz) {
+  const c = svgCache.get(svgKey(o));
+  if (c && c.im.complete && c.im.naturalWidth) x.drawImage(c.im, -sz.w / 2, -sz.h / 2, sz.w, sz.h);
+}
+function svgBaseWidth(it, sizePx) { const vb = it.vb || [100, 100]; return sizePx * (it.sz || 1) * (vb[0] >= vb[1] ? 1 : vb[0] / vb[1]); }
+
+async function placeStamp(pt) {
+  const t = curTool;
+  if (!t.item) return placeEmoji(pt);
+  const it = LIB()[t.item.cat].find(i => i.k === t.item.key); if (!it) return;
+  const L0 = activeLayer();
+  if (!t.movable && (!L0 || !L0.visible)) { toast('Diese Ebene ist ausgeblendet'); return; }
+  const o = { kind: 'svg', cat: t.item.cat, key: it.k, w: svgBaseWidth(it, mmToPx(t.mm)), x: pt.x, y: pt.y, s: 1, r: t.rotate ? (Math.random() - 0.5) * 0.5 : 0, fx: 1 };
+  await svgLoad(o);
+  if (t.movable) { const L = addObjLayer(o, '✨ ' + it.n); if (L) toast('Mit „Transform“ lässt er sich noch verschieben und drehen', 2500); return; }
+  let L = activeLayer(); if (!L || L.locked) { toast('Diese Ebene ist gesperrt 🔒'); return; }
+  L = rasterTarget(L);
+  const snap = copyCanvas(L.canvas), sz = svgSize(o);
+  L.ctx.save(); L.ctx.translate(o.x, o.y); L.ctx.rotate(o.r); drawObjBase(L.ctx, o, sz); L.ctx.restore();
+  const b = newBox(); grow(b, o.x, o.y, Math.max(sz.w, sz.h) * 0.75); commitBox(L, snap, b); refreshLayers(); invalidate();
+}
+async function placeFrame(it) {
+  const o = { kind: 'svg', cat: 'frame', key: it.k, vbw: Math.round(doc.mm[0] * 10), vbh: Math.round(doc.mm[1] * 10), w: doc.w, x: doc.w / 2, y: doc.h / 2, s: 1, r: 0, fx: 1 };
+  await svgLoad(o); const L = addObjLayer(o, '✨ Rahmen: ' + it.n); if (L) toast('Rahmen eingefügt');
+}
+async function placeColorPage(it) {
+  if (doc.layers.length + 2 > MAX_LAYERS) { toast('Zu viele Ebenen – bitte erst Ebenen zusammenführen'); return; }
+  const base = doc.active; addLayer(); const colorsL = activeLayer(); colorsL.name = 'Farben';
+  const o = { kind: 'svg', cat: 'color', key: it.k, w: Math.min(doc.w, doc.h) * 0.92, x: doc.w / 2, y: doc.h / 2, s: 1, r: 0, fx: 1 };
+  await svgLoad(o); addObjLayer(o, '✨ Ausmalbild: ' + it.n);
+  doc.active = doc.layers.indexOf(colorsL); refreshLayers(); invalidate();
+  selectTool('fill'); toast('Ausmalen: Mit „Füllen“ auf eine Fläche tippen oder mit dem Pinsel malen', 4000);
+}
+function galleryDialog2(tab) {
+  const t = T('stamp');
+  const tabs = [['sticker', 'Sticker'], ['emoji', 'Emoji'], ['frame', 'Rahmen'], ['color', 'Ausmalbilder']];
+  const body = h('div', {}), bar = h('div', { style: 'display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap' }), grid = h('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fill,minmax(96px,1fr));max-height:56vh;overflow-y:auto' });
+  let cur = tab || 'sticker', close;
+  const thumb = (cat, it) => {
+    const o = { kind: 'svg', cat, key: it.k, vbw: 750, vbh: 1000 };
+    return h('img', { src: svgUrl(o), style: 'width:100%;height:84px;object-fit:contain;display:block' });
+  };
+  const draw = () => {
+    bar.innerHTML = ''; grid.innerHTML = '';
+    tabs.forEach(([k, n]) => bar.append(h('button', { class: 'chip' + (cur === k ? ' on' : ''), text: n, onclick: () => { cur = k; draw(); } })));
+    if (cur === 'emoji') EMOJIS.forEach(em => grid.append(h('button', { class: 'opt-btn', style: 'font-size:34px', text: em, onclick: () => { t.item = null; t.emoji = em; close(); selectTool('stamp'); toast('Auf die Karte tippen zum Platzieren'); } })));
+    else LIB()[cur].forEach(it => grid.append(h('button', { class: 'opt-btn', style: 'padding:6px', onclick: () => {
+      close();
+      if (cur === 'sticker') { t.item = { cat: 'sticker', key: it.k }; selectTool('stamp'); toast('Auf die Karte tippen zum Platzieren'); }
+      else if (cur === 'frame') placeFrame(it); else placeColorPage(it);
+    } }, thumb(cur, it), h('small', { text: it.n, style: 'display:block;margin-top:4px;color:var(--mut)' }))));
+  };
+  draw(); body.append(bar, grid);
+  close = openModal('Sticker, Rahmen & Ausmalbilder', body, [{ label: 'Schließen' }]);
 }
 
 /* ================= Objekte (Text, Foto) & Transformieren ================= */
@@ -625,7 +698,7 @@ function objSize(o) {
     return { w: w + px * 0.2, h: lines.length * px * 1.25, lh: px * 1.25, lines, px };
   }
   if (o.kind === 'image') return { w: o.img.width, h: o.img.height };
-  if (o.kind === 'svg' && window.svgSize) return window.svgSize(o);
+  if (o.kind === 'svg') return svgSize(o);
   return { w: 100, h: 100 };
 }
 function drawObjBase(x, o, sz) {
@@ -633,7 +706,7 @@ function drawObjBase(x, o, sz) {
     x.font = fontStr(o, sz.px); x.fillStyle = o.color; x.textAlign = 'center'; x.textBaseline = 'middle';
     sz.lines.forEach((l, i) => x.fillText(l, 0, -sz.h / 2 + sz.lh / 2 + i * sz.lh));
   } else if (o.kind === 'image') { x.imageSmoothingQuality = 'high'; x.drawImage(o.img, -sz.w / 2, -sz.h / 2); }
-  else if (o.kind === 'svg' && window.svgDraw) window.svgDraw(x, o, sz);
+  else if (o.kind === 'svg') svgDraw(x, o, sz);
 }
 function renderObj(L) {
   const o = L.obj, c = L.ctx;
@@ -644,6 +717,7 @@ function renderObj(L) {
   drawObjBase(c, o, sz); c.restore();
 }
 function flatten(L) { if (L.obj) { L.obj = null; if (/^(🔤|🖼️|✨|🖼) /.test(L.name)) L.name = L.name.replace(/^\S+ /, ''); toast('Objekt wurde in normale Ebene umgewandelt', 1800); refreshLayers(); } }
+function rasterTarget(L) { if (!L.obj) return L; addLayer(); toast('Neue Ebene über dem Objekt angelegt', 1500); return activeLayer(); }
 function addObjLayer(obj, name) {
   if (doc.layers.length >= MAX_LAYERS) { toast('Maximal ' + MAX_LAYERS + ' Ebenen'); return null; }
   const L = newLayer(name); L.obj = obj; renderObj(L);
@@ -970,9 +1044,11 @@ function buildOpts() {
   } else if (t.id === 'text') {
     bar.append(h('span', { class: 'hint', text: 'Auf die Karte tippen, dann Text eingeben. Danach lässt er sich mit „Transform“ bewegen, drehen und ändern.' }));
   } else if (t.id === 'stamp') {
-    EMOJIS.forEach(em => bar.append(h('button', { class: 'chip em' + (t.emoji === em ? ' on' : ''), text: em, onclick: () => { t.emoji = em; buildTools(); buildOpts(); } })));
+    const prev = t.item ? h('img', { src: svgUrl({ kind: 'svg', cat: t.item.cat, key: t.item.key, vbw: 750, vbh: 1000 }), style: 'height:30px;vertical-align:middle' }) : h('span', { text: t.emoji, style: 'font-size:24px;vertical-align:middle' });
+    bar.append(h('button', { class: 'chip', style: 'height:46px', onclick: () => galleryDialog2('sticker') }, prev, '  Auswählen …'));
     bar.append(sizeSl('Größe'));
     bar.append(h('button', { class: 'chip' + (t.rotate ? ' on' : ''), text: 'Leicht drehen', onclick: ev => { t.rotate = !t.rotate; ev.currentTarget.classList.toggle('on', t.rotate); } }));
+    if (t.item) bar.append(h('button', { class: 'chip' + (t.movable ? ' on' : ''), text: 'Beweglich (eigene Ebene)', onclick: ev => { t.movable = !t.movable; ev.currentTarget.classList.toggle('on', t.movable); } }));
   } else if (t.id === 'move') {
     const L = activeLayer();
     if (L && L.obj) {
@@ -1145,6 +1221,7 @@ function menuDialog() {
   const body = h('div', { class: 'menu' },
     item('📄 Neue Karte', '', () => newDocDialog(false)),
     item('🗂 Meine Karten', 'gespeicherte Karten öffnen', galleryDialog),
+    item('🎄 Sticker, Rahmen & Ausmalbilder', '', () => galleryDialog2('sticker')),
     item('🖼 Foto / Bild einfügen', 'auf neue Ebene', () => $('#fileIn').click()),
     item('🧹 Ebene leeren', '', clearLayer),
     item('⚙️ Einstellungen', '', settingsDialog),
@@ -1249,6 +1326,7 @@ async function loadDoc(id) {
       if (l.objImg) { const ib = await createImageBitmap(l.objImg), ic = makeCanvas(ib.width, ib.height); ic.getContext('2d').drawImage(ib, 0, 0); L.obj.img = ic; }
     }
   }
+  await Promise.all(doc.layers.filter(l => l.obj && l.obj.kind === 'svg').map(l => svgLoad(l.obj)));
   doc.active = Math.min(doc.active, doc.layers.length - 1);
   buf = makeCanvas(doc.w, doc.h); hist.u.length = 0; hist.r.length = 0;
   afterDocChange(true);
